@@ -3,6 +3,7 @@ let state = {
   isPlaying: false,
   isSelectingArea: false,
   captureRect: null,
+  prefix: '',
   actions: []
 };
 
@@ -111,7 +112,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     sendResponse(state);
   } else if (message.command === 'stopPlayback') {
     state.isPlaying = false;
+    
+    chrome.tabs.query({active: true, lastFocusedWindow: true}, function(tabs) {
+      if (tabs[0]) {
+        chrome.tabs.sendMessage(tabs[0].id, { command: 'hideRect' }).catch(() => {});
+      }
+    });
+
     broadcastState();
+    sendResponse(state);
+  } else if (message.command === 'updatePrefix') {
+    state.prefix = message.prefix;
     sendResponse(state);
   }
   return true;
@@ -149,6 +160,7 @@ async function startPlayback(prefix) {
   
   if (prefix && prefix.length > 0) {
     sessionPrefix = prefix;
+    state.prefix = prefix;
   } else {
     // Generate 6 char YYMMDD
     const now = new Date();
@@ -156,6 +168,7 @@ async function startPlayback(prefix) {
     const mm = String(now.getMonth() + 1).padStart(2, '0');
     const dd = String(now.getDate()).padStart(2, '0');
     sessionPrefix = `${yy}${mm}${dd}`;
+    state.prefix = '';
   }
   
   broadcastState();

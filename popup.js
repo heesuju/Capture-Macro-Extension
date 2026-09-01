@@ -12,6 +12,10 @@ document.addEventListener('DOMContentLoaded', () => {
   function updateUI(state) {
     actionCount.textContent = state.actions.length;
     
+    if (document.activeElement !== prefixInput) {
+      prefixInput.value = state.prefix || '';
+    }
+    
     if (state.captureRect) {
       areaStatus.textContent = `Custom (${state.captureRect.width}x${state.captureRect.height})`;
       btnClearArea.style.display = 'block';
@@ -100,6 +104,10 @@ document.addEventListener('DOMContentLoaded', () => {
     chrome.runtime.sendMessage({ command: 'clearArea' }, (response) => {
       if (response) updateUI(response);
     });
+  });
+
+  prefixInput.addEventListener('input', () => {
+    chrome.runtime.sendMessage({ command: 'updatePrefix', prefix: prefixInput.value });
   });
 
   // Listen for updates from background (like action recorded or playback ended)
