@@ -137,12 +137,18 @@ async function cropImage(dataUrl, rect) {
   const blob = await response.blob();
   const bitmap = await createImageBitmap(blob);
   
-  const canvas = new OffscreenCanvas(rect.width, rect.height);
+  const dpr = rect.devicePixelRatio || 1;
+  const targetX = Math.round(rect.x * dpr);
+  const targetY = Math.round(rect.y * dpr);
+  const targetWidth = Math.round(rect.width * dpr);
+  const targetHeight = Math.round(rect.height * dpr);
+  
+  const canvas = new OffscreenCanvas(targetWidth, targetHeight);
   const ctx = canvas.getContext('2d');
   
   ctx.drawImage(bitmap, 
-    rect.x, rect.y, rect.width, rect.height,
-    0, 0, rect.width, rect.height
+    targetX, targetY, targetWidth, targetHeight,
+    0, 0, targetWidth, targetHeight
   );
   
   const croppedBlob = await canvas.convertToBlob({ type: 'image/png' });

@@ -135,7 +135,13 @@ function startSelection() {
     overlay.removeEventListener('mousemove', onMouseMove);
     overlay.removeEventListener('mouseup', onMouseUp);
 
-    const rect = { x, y, width, height };
+    const rect = { 
+      x, 
+      y, 
+      width, 
+      height,
+      devicePixelRatio: window.devicePixelRatio || 1
+    };
     
     // Send to background
     chrome.runtime.sendMessage({
