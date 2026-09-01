@@ -81,6 +81,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       startPlayback();
     }
     sendResponse(state);
+  } else if (message.command === 'stopPlayback') {
+    state.isPlaying = false;
+    broadcastState();
+    sendResponse(state);
   }
   return true;
 });
@@ -113,49 +117,56 @@ async function startPlayback() {
 
   captureCount = 0;
 
-  for (let i = 0; i < state.actions.length; i++) {
-    const action = state.actions[i];
-    
-    // Wait for the recorded delay
-    await sleep(action.delay);
-
-    if (action.type === 'click') {
-      // Simulate physical click
-      await chrome.debugger.sendCommand(target, 'Input.dispatchMouseEvent', {
-        type: 'mousePressed',
-        x: action.x,
-        y: action.y,
-        button: 'left',
-        clickCount: 1
-      });
+  while (state.isPlaying) {
+    for (let i = 0; i < state.actions.length; i++) {
+      if (!state.isPlaying) break;
+      const action = state.actions[i];
       
-      await chrome.debugger.sendCommand(target, 'Input.dispatchMouseEvent', {
-        type: 'mouseReleased',
-        x: action.x,
-        y: action.y,
-        button: 'left',
-        clickCount: 1
-      });
+      // Wait for the recorded delay
+      await sleep(action.delay);
+      if (!state.isPlaying) break;
 
-      // Wait a bit for the UI to update after the click
-      await sleep(1000); 
+      if (action.type === 'click') {
+        // Simulate physical click
+        await chrome.debugger.sendCommand(target, 'Input.dispatchMouseEvent', {
+          type: 'mousePressed',
+          x: action.x,
+          y: action.y,
+          button: 'left',
+          clickCount: 1
+        });
+        
+        await chrome.debugger.sendCommand(target, 'Input.dispatchMouseEvent', {
+          type: 'mouseReleased',
+          x: action.x,
+          y: action.y,
+          button: 'left',
+          clickCount: 1
+        });
 
-      // Take a screenshot
-      const dataUrl = await chrome.tabs.captureVisibleTab(tabs[0].windowId, {format: 'png'});
-      
-      // Download the screenshot
-      captureCount++;
-      const filename = `capture_${captureCount.toString().padStart(3, '0')}.png`;
-      
-      await chrome.downloads.download({
-        url: dataUrl,
-        filename: filename,
-        saveAs: false
-      });
+        // Wait a bit for the UI to update after the click
+        await sleep(1000); 
+        if (!state.isPlaying) break;
+
+        // Take a screenshot
+        const dataUrl = await chrome.tabs.captureVisibleTab(tabs[0].windowId, {format: 'png'});
+        
+        // Download the screenshot
+        captureCount++;
+        const filename = `capture_${captureCount.toString().padStart(3, '0')}.png`;
+        
+        await chrome.downloads.download({
+          url: dataUrl,
+          filename: filename,
+          saveAs: false
+        });
+      }
     }
+    // Small buffer between loops
+    if (state.isPlaying) await sleep(500);
   }
 
-  await chrome.debugger.detach(target);
+  await chrome.debugger.detach(target).catch(() => {});
   endPlayback();
 }
 
