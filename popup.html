@@ -11,13 +11,16 @@
     <div id="status" class="status">Status: Ready</div>
     
     <div class="stats">
-      <span>Actions Recorded: <strong id="actionCount">0</strong></span>
+      <span>Actions Recorded: <strong id="actionCount">0</strong></span><br>
+      <span>Capture Area: <strong id="areaStatus">Full Page</strong></span>
     </div>
 
     <div class="controls">
+      <button id="btnSetArea" class="btn secondary">Set Capture Area</button>
       <button id="btnRecord" class="btn primary">Start Recording</button>
       <button id="btnPlay" class="btn success" disabled>Play Macro</button>
-      <button id="btnClear" class="btn danger">Clear</button>
+      <button id="btnClear" class="btn danger">Clear Macro</button>
+      <button id="btnClearArea" class="btn danger" style="display: none;">Clear Area</button>
     </div>
   </div>
   <script src="popup.js"></script>

@@ -2,13 +2,32 @@ document.addEventListener('DOMContentLoaded', () => {
   const btnRecord = document.getElementById('btnRecord');
   const btnPlay = document.getElementById('btnPlay');
   const btnClear = document.getElementById('btnClear');
+  const btnSetArea = document.getElementById('btnSetArea');
+  const btnClearArea = document.getElementById('btnClearArea');
   const statusDisplay = document.getElementById('status');
   const actionCount = document.getElementById('actionCount');
+  const areaStatus = document.getElementById('areaStatus');
 
   function updateUI(state) {
     actionCount.textContent = state.actions.length;
     
-    if (state.isRecording) {
+    if (state.captureRect) {
+      areaStatus.textContent = `Custom (${state.captureRect.width}x${state.captureRect.height})`;
+      btnClearArea.style.display = 'block';
+    } else {
+      areaStatus.textContent = 'Full Page';
+      btnClearArea.style.display = 'none';
+    }
+    
+    if (state.isSelectingArea) {
+      statusDisplay.textContent = 'Status: Draw Rectangle...';
+      statusDisplay.className = 'status recording';
+      btnRecord.disabled = true;
+      btnPlay.disabled = true;
+      btnClear.disabled = true;
+      btnSetArea.disabled = true;
+      btnClearArea.disabled = true;
+    } else if (state.isRecording) {
       statusDisplay.textContent = 'Status: Recording...';
       statusDisplay.className = 'status recording';
       btnRecord.textContent = 'Stop Recording';
@@ -34,6 +53,8 @@ document.addEventListener('DOMContentLoaded', () => {
       btnPlay.textContent = 'Play Macro';
       btnPlay.className = 'btn success';
       btnPlay.disabled = state.actions.length === 0;
+      btnSetArea.disabled = false;
+      btnClearArea.disabled = !state.captureRect;
     }
   }
 
@@ -63,6 +84,18 @@ document.addEventListener('DOMContentLoaded', () => {
 
   btnClear.addEventListener('click', () => {
     chrome.runtime.sendMessage({ command: 'clearActions' }, (response) => {
+      if (response) updateUI(response);
+    });
+  });
+
+  btnSetArea.addEventListener('click', () => {
+    chrome.runtime.sendMessage({ command: 'startSelectingArea' }, (response) => {
+      if (response) updateUI(response);
+    });
+  });
+
+  btnClearArea.addEventListener('click', () => {
+    chrome.runtime.sendMessage({ command: 'clearArea' }, (response) => {
       if (response) updateUI(response);
     });
   });

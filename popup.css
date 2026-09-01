@@ -89,6 +89,14 @@ h2 {
   background-color: var(--primary-hover);
 }
 
+.btn.secondary {
+  background-color: #5b6070;
+}
+
+.btn.secondary:hover:not(:disabled) {
+  background-color: #4a4e5c;
+}
+
 .btn.danger {
   background-color: var(--danger-color);
 }
