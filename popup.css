@@ -1,0 +1,112 @@
+:root {
+  --bg-color: #1a1a2e;
+  --text-color: #e2e2e2;
+  --primary-color: #0f3460;
+  --primary-hover: #16213e;
+  --danger-color: #e94560;
+  --danger-hover: #c83b52;
+  --success-color: #4caf50;
+  --success-hover: #45a049;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  background-color: var(--bg-color);
+  color: var(--text-color);
+  width: 300px;
+}
+
+.container {
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+}
+
+h2 {
+  margin: 0;
+  text-align: center;
+  font-weight: 600;
+  letter-spacing: 1px;
+}
+
+.status {
+  text-align: center;
+  font-size: 0.9em;
+  padding: 8px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+}
+
+.status.recording {
+  color: var(--danger-color);
+  animation: pulse 1.5s infinite;
+}
+
+.status.playing {
+  color: var(--success-color);
+}
+
+.stats {
+  text-align: center;
+  font-size: 0.9em;
+  color: #aaa;
+}
+
+.controls {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.btn {
+  border: none;
+  border-radius: 6px;
+  padding: 10px 15px;
+  font-size: 14px;
+  font-weight: bold;
+  cursor: pointer;
+  transition: background-color 0.2s, transform 0.1s;
+  color: white;
+}
+
+.btn:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn.primary {
+  background-color: var(--primary-color);
+}
+
+.btn.primary:hover:not(:disabled) {
+  background-color: var(--primary-hover);
+}
+
+.btn.danger {
+  background-color: var(--danger-color);
+}
+
+.btn.danger:hover:not(:disabled) {
+  background-color: var(--danger-hover);
+}
+
+.btn.success {
+  background-color: var(--success-color);
+}
+
+.btn.success:hover:not(:disabled) {
+  background-color: var(--success-hover);
+}
+
+@keyframes pulse {
+  0% { opacity: 1; }
+  50% { opacity: 0.5; }
+  100% { opacity: 1; }
+}

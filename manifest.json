@@ -1,0 +1,22 @@
+{
+  "manifest_version": 3,
+  "name": "Auto Capture Macro",
+  "version": "1.0",
+  "description": "Records clicks and replays them, capturing a screenshot after each click.",
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "debugger",
+    "downloads",
+    "storage"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html"
+  }
+}
