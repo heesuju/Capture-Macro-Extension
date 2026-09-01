@@ -7,6 +7,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const statusDisplay = document.getElementById('status');
   const actionCount = document.getElementById('actionCount');
   const areaStatus = document.getElementById('areaStatus');
+  const prefixInput = document.getElementById('prefixInput');
 
   function updateUI(state) {
     actionCount.textContent = state.actions.length;
@@ -76,7 +77,8 @@ document.addEventListener('DOMContentLoaded', () => {
         if (response) updateUI(response);
       });
     } else {
-      chrome.runtime.sendMessage({ command: 'startPlayback' }, (response) => {
+      const prefix = prefixInput.value.trim();
+      chrome.runtime.sendMessage({ command: 'startPlayback', prefix: prefix }, (response) => {
         if (response) updateUI(response);
       });
     }

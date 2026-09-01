@@ -8,6 +8,7 @@ let state = {
 
 let lastActionTime = 0;
 let captureCount = 0;
+let sessionPrefix = '';
 
 function broadcastState() {
   chrome.runtime.sendMessage({ type: 'STATE_UPDATE', state }).catch(() => {});
@@ -105,7 +106,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     sendResponse({success: true});
   } else if (message.command === 'startPlayback') {
     if (!state.isPlaying && state.actions.length > 0) {
-      startPlayback();
+      startPlayback(message.prefix);
     }
     sendResponse(state);
   } else if (message.command === 'stopPlayback') {
@@ -142,9 +143,21 @@ async function cropImage(dataUrl, rect) {
   });
 }
 
-async function startPlayback() {
+async function startPlayback(prefix) {
   state.isPlaying = true;
   state.isRecording = false; // Ensure recording is off
+  
+  if (prefix && prefix.length > 0) {
+    sessionPrefix = prefix;
+  } else {
+    // Generate 6 char YYMMDD
+    const now = new Date();
+    const yy = String(now.getFullYear()).slice(-2);
+    const mm = String(now.getMonth() + 1).padStart(2, '0');
+    const dd = String(now.getDate()).padStart(2, '0');
+    sessionPrefix = `${yy}${mm}${dd}`;
+  }
+  
   broadcastState();
 
   const tabs = await chrome.tabs.query({active: true, lastFocusedWindow: true});
@@ -210,7 +223,7 @@ async function startPlayback() {
         }
         
         captureCount++;
-        const filename = `capture_${captureCount.toString().padStart(3, '0')}.png`;
+        const filename = `${sessionPrefix}_${captureCount.toString().padStart(3, '0')}.png`;
         
         await chrome.downloads.download({
           url: dataUrl,

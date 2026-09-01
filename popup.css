@@ -55,6 +55,25 @@ h2 {
   color: #aaa;
 }
 
+.input-group {
+  display: flex;
+  flex-direction: column;
+}
+
+input[type="text"] {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: var(--text-color);
+  padding: 8px 12px;
+  border-radius: 4px;
+  font-size: 14px;
+  outline: none;
+}
+
+input[type="text"]:focus {
+  border-color: var(--primary-color);
+}
+
 .controls {
   display: flex;
   flex-direction: column;
