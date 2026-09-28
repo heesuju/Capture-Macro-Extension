@@ -29,7 +29,8 @@ const I18N = {
     statusRecording: 'Recording...',
     statusPlaying: 'Playing...',
     areaRatioFull: 'Full',
-    areaRatioFree: 'Free'
+    areaRatioFree: 'Free',
+    createPdfLabel: 'Create PDF after capture'
   },
   ko: {
     appTitle: 'CheeseIt',
@@ -60,6 +61,7 @@ const I18N = {
     statusRecording: '녹화 중...',
     statusPlaying: '실행 중...',
     areaRatioFull: '전체',
-    areaRatioFree: '자유'
+    areaRatioFree: '자유',
+    createPdfLabel: '캡처 후 PDF 생성'
   }
 };

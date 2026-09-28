@@ -18,6 +18,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const areaStatus  = document.getElementById('areaStatus');
   const prefixInput = document.getElementById('prefixInput');
   const captureFirstCheckbox = document.getElementById('captureFirstCheckbox');
+  const createPdfCheckbox    = document.getElementById('createPdfCheckbox');
   const btnSave     = document.getElementById('btnSave');
   const btnDelete   = document.getElementById('btnDelete');
   const saveNameInput = document.getElementById('saveNameInput');
@@ -246,6 +247,9 @@ document.addEventListener('DOMContentLoaded', () => {
     if (document.activeElement !== captureFirstCheckbox) {
       captureFirstCheckbox.checked = state.captureFirst || false;
     }
+    if (document.activeElement !== createPdfCheckbox) {
+      createPdfCheckbox.checked = (state.createPdf !== false); // default true
+    }
 
     // Macro enabled
     const macroOn = state.macroEnabled || false;
@@ -364,6 +368,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
   captureFirstCheckbox.addEventListener('change', () => {
     chrome.runtime.sendMessage({ command: 'updateCaptureFirst', captureFirst: captureFirstCheckbox.checked });
+  });
+
+  createPdfCheckbox.addEventListener('change', () => {
+    chrome.runtime.sendMessage({ command: 'updateCreatePdf', createPdf: createPdfCheckbox.checked });
   });
 
   btnSave.addEventListener('click', () => {

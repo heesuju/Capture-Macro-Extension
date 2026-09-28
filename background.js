@@ -1,3 +1,5 @@
+importScripts('pdf-lib.min.js');
+
 let state = {
   isRecording: false,
   isPlaying: false,
@@ -7,7 +9,8 @@ let state = {
   actions: [],
   captureFirst: false,
   macroEnabled: false,
-  savedRecordings: {}
+  savedRecordings: {},
+  createPdf: true
 };
 
 chrome.storage.local.get(['savedRecordings'], (result) => {
@@ -20,6 +23,7 @@ let lastActionTime = 0;
 let captureCount = 0;
 let sessionPrefix = '';
 let currentSubfolder = '';
+let sessionCaptures = []; // { dataUrl, width, height } for PDF generation
 
 function getTodayDateKey() {
   const now = new Date();
@@ -161,6 +165,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   } else if (message.command === 'updateCaptureFirst') {
     state.captureFirst = message.captureFirst;
     sendResponse(state);
+  } else if (message.command === 'updateCreatePdf') {
+    state.createPdf = message.createPdf;
+    sendResponse(state);
   } else if (message.command === 'updateMacroEnabled') {
     state.macroEnabled = message.macroEnabled;
     sendResponse(state);
@@ -215,6 +222,12 @@ async function captureScreenshot(tabs, tabId, prefix) {
     filename: filePath,
     saveAs: false
   });
+
+  // Collect for PDF if enabled
+  if (state.createPdf) {
+    const dims = await getImageDimensions(dataUrl);
+    sessionCaptures.push({ dataUrl, width: dims.width, height: dims.height });
+  }
 }
 
 async function sleep(ms) {
@@ -254,6 +267,7 @@ async function takeSingleCapture(prefix) {
   broadcastState();
 
   currentSubfolder = await getNextRunSubfolder();
+  sessionCaptures = [];
 
   if (prefix && prefix.length > 0) {
     sessionPrefix = prefix;
@@ -273,7 +287,7 @@ async function takeSingleCapture(prefix) {
     await captureScreenshot(tabs, tabs[0].id, sessionPrefix);
   }
 
-  endPlayback();
+  await endPlayback();
 }
 
 async function startPlayback(prefix) {
@@ -281,6 +295,7 @@ async function startPlayback(prefix) {
   state.isRecording = false; // Ensure recording is off
   
   currentSubfolder = await getNextRunSubfolder();
+  sessionCaptures = [];
 
   if (prefix && prefix.length > 0) {
     sessionPrefix = prefix;
@@ -361,7 +376,7 @@ async function startPlayback(prefix) {
   }
 
   await chrome.debugger.detach(target).catch(() => {});
-  endPlayback();
+  await endPlayback();
 }
 
 async function dispatchKeyAction(target, action) {
@@ -447,7 +462,66 @@ async function dispatchKeyAction(target, action) {
   }
 }
 
-function endPlayback() {
+async function endPlayback() {
   state.isPlaying = false;
   broadcastState();
+
+  if (state.createPdf && sessionCaptures.length > 0) {
+    await generateAndDownloadPdf(sessionCaptures, sessionPrefix, currentSubfolder);
+  }
+  sessionCaptures = [];
+}
+
+async function getImageDimensions(dataUrl) {
+  // Extract dimensions from PNG header (fast, no canvas needed)
+  // PNG: 8-byte sig + 4-byte len + "IHDR" + 4-byte W + 4-byte H
+  const base64 = dataUrl.split(',')[1];
+  const binary = atob(base64.substring(0, 64));
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  // IHDR starts at offset 12 (after 8 sig + 4 len + 4 type)
+  const width = (bytes[16] << 24) | (bytes[17] << 16) | (bytes[18] << 8) | bytes[19];
+  const height = (bytes[20] << 24) | (bytes[21] << 16) | (bytes[22] << 8) | bytes[23];
+  return { width: width >>> 0, height: height >>> 0 };
+}
+
+async function generateAndDownloadPdf(captures, prefix, subfolder) {
+  try {
+    const { PDFDocument } = PDFLib;
+    const pdfDoc = await PDFDocument.create();
+
+    for (const capture of captures) {
+      const base64Data = capture.dataUrl.split(',')[1];
+      const pngBytes = Uint8Array.from(atob(base64Data), c => c.charCodeAt(0));
+      const pngImage = await pdfDoc.embedPng(pngBytes);
+
+      // Create a page exactly the same size as the image (1pt = 1px)
+      const page = pdfDoc.addPage([capture.width, capture.height]);
+      page.drawImage(pngImage, {
+        x: 0,
+        y: 0,
+        width: capture.width,
+        height: capture.height
+      });
+    }
+
+    const pdfBytes = await pdfDoc.save();
+    const pdfBlob = new Blob([pdfBytes], { type: 'application/pdf' });
+    const pdfDataUrl = await new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(reader.result);
+      reader.readAsDataURL(pdfBlob);
+    });
+
+    const filename = `${prefix || 'capture'}.pdf`;
+    const filePath = subfolder ? `${subfolder}/${filename}` : filename;
+
+    await chrome.downloads.download({
+      url: pdfDataUrl,
+      filename: filePath,
+      saveAs: false
+    });
+  } catch (err) {
+    console.error('PDF generation failed:', err);
+  }
 }
