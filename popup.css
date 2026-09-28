@@ -243,6 +243,48 @@ select {
   min-width: 0; /* allows flex item to shrink below content size */
 }
 
+/* Area Button Group */
+.area-btn-group {
+  display: flex;
+  gap: 6px;
+}
+
+.area-btn {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 8px 4px;
+  background: rgba(0, 0, 0, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 0.65rem;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  transition: background-color 0.2s, border-color 0.2s, color 0.2s;
+  font-family: inherit;
+}
+
+.area-btn:hover {
+  background: var(--bg-surface-hover);
+  color: var(--text-color);
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.area-btn.active {
+  background: var(--primary-color);
+  border-color: var(--primary-hover);
+  color: #fff;
+}
+
+.area-btn svg {
+  flex-shrink: 0;
+}
+
 /* Main Action */
 .main-action-container {
   margin-top: 5px;

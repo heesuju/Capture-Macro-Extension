@@ -24,7 +24,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
     sendResponse({ success: true });
   } else if (message.command === 'startSelectingArea') {
-    startSelection();
+    startSelection(message.ratio);
     sendResponse({ success: true });
   } else if (message.command === 'clearArea') {
     if (captureRectDiv) {
@@ -74,7 +74,7 @@ function drawPersistentRect(rect) {
   captureRectDiv.style.display = 'block';
 }
 
-function startSelection() {
+function startSelection(ratio) {
   const overlay = document.createElement('div');
   overlay.style.position = 'fixed';
   overlay.style.top = '0';
@@ -110,10 +110,19 @@ function startSelection() {
     const currentX = e.clientX;
     const currentY = e.clientY;
     
-    const x = Math.min(startX, currentX);
-    const y = Math.min(startY, currentY);
-    const width = Math.abs(currentX - startX);
-    const height = Math.abs(currentY - startY);
+    let width = Math.abs(currentX - startX);
+    let height = Math.abs(currentY - startY);
+    
+    if (ratio) {
+      if (width / height > ratio) {
+        width = height * ratio;
+      } else {
+        height = width / ratio;
+      }
+    }
+    
+    const x = currentX < startX ? startX - width : startX;
+    const y = currentY < startY ? startY - height : startY;
     
     selection.style.left = x + 'px';
     selection.style.top = y + 'px';
@@ -125,10 +134,22 @@ function startSelection() {
     if (!isDragging) return;
     isDragging = false;
     
-    const x = Math.min(startX, e.clientX);
-    const y = Math.min(startY, e.clientY);
-    const width = Math.abs(e.clientX - startX);
-    const height = Math.abs(e.clientY - startY);
+    const currentX = e.clientX;
+    const currentY = e.clientY;
+    
+    let width = Math.abs(currentX - startX);
+    let height = Math.abs(currentY - startY);
+    
+    if (ratio) {
+      if (width / height > ratio) {
+        width = height * ratio;
+      } else {
+        height = width / ratio;
+      }
+    }
+    
+    const x = currentX < startX ? startX - width : startX;
+    const y = currentY < startY ? startY - height : startY;
     
     overlay.remove();
     overlay.removeEventListener('mousedown', onMouseDown);

@@ -58,6 +58,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     sendResponse(state);
   } else if (message.command === 'startSelectingArea') {
     state.isSelectingArea = true;
+    state.captureRatio = message.ratio || 'free';
     broadcastState();
 
     chrome.tabs.query({active: true, lastFocusedWindow: true}, function(tabs) {
@@ -70,7 +71,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             target: target,
             files: ['content.js']
         }).then(() => {
-          chrome.tabs.sendMessage(tabs[0].id, { command: 'startSelectingArea' }).catch(() => {});
+          chrome.tabs.sendMessage(tabs[0].id, { command: 'startSelectingArea', ratio: message.ratio }).catch(() => {});
         }).catch(() => {});
       }
     });

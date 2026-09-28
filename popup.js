@@ -3,7 +3,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const btnPlay = document.getElementById('btnPlay');
   const btnClear = document.getElementById('btnClear');
   const btnSetArea = document.getElementById('btnSetArea');
-  const btnClearArea = document.getElementById('btnClearArea');
+  const areaBtns = document.querySelectorAll('.area-btn');
   const statusDisplay = document.getElementById('status');
   const actionCount = document.getElementById('actionCount');
   const areaStatus = document.getElementById('areaStatus');
@@ -53,11 +53,16 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     
     if (state.captureRect) {
+      const activeRatio = state.captureRatio ? String(state.captureRatio) : 'free';
+      setActiveAreaBtn(activeRatio);
       areaStatus.textContent = `Custom (${state.captureRect.width}x${state.captureRect.height})`;
-      btnClearArea.style.display = 'block';
+      btnSetArea.style.display = 'block';
+      btnSetArea.textContent = 'Redraw Area';
     } else {
+      setActiveAreaBtn('full');
       areaStatus.textContent = 'Full Page';
-      btnClearArea.style.display = 'none';
+      btnSetArea.style.display = 'none';
+      btnSetArea.textContent = 'Draw Area on Page';
     }
     
     if (state.isSelectingArea) {
@@ -69,7 +74,7 @@ document.addEventListener('DOMContentLoaded', () => {
       btnPlay.disabled = true;
       btnClear.disabled = true;
       btnSetArea.disabled = true;
-      btnClearArea.disabled = true;
+      areaBtns.forEach(b => b.disabled = true);
     } else if (state.isRecording) {
       statusDisplay.textContent = 'Recording...';
       statusDisplay.className = 'status recording';
@@ -102,7 +107,7 @@ document.addEventListener('DOMContentLoaded', () => {
       btnPlay.className = 'btn success';
       btnPlay.disabled = false;
       btnSetArea.disabled = false;
-      btnClearArea.disabled = !state.captureRect;
+      areaBtns.forEach(b => b.disabled = false);
     }
   }
 
@@ -137,14 +142,30 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   });
 
-  btnSetArea.addEventListener('click', () => {
-    chrome.runtime.sendMessage({ command: 'startSelectingArea' }, (response) => {
-      if (response) updateUI(response);
+  function setActiveAreaBtn(ratio) {
+    areaBtns.forEach(b => b.classList.toggle('active', b.dataset.ratio === ratio));
+  }
+
+  areaBtns.forEach(btn => {
+    btn.addEventListener('click', () => {
+      const val = btn.dataset.ratio;
+      setActiveAreaBtn(val);
+      if (val === 'full') {
+        chrome.runtime.sendMessage({ command: 'clearArea' }, (response) => {
+          if (response) updateUI(response);
+        });
+      } else {
+        btnSetArea.style.display = 'block';
+        btnSetArea.textContent = 'Draw Area on Page';
+      }
     });
   });
 
-  btnClearArea.addEventListener('click', () => {
-    chrome.runtime.sendMessage({ command: 'clearArea' }, (response) => {
+  btnSetArea.addEventListener('click', () => {
+    const activeBtn = document.querySelector('.area-btn.active');
+    const ratioVal = activeBtn ? activeBtn.dataset.ratio : 'free';
+    const ratio = ratioVal === 'free' ? null : parseFloat(ratioVal);
+    chrome.runtime.sendMessage({ command: 'startSelectingArea', ratio: ratio }, (response) => {
       if (response) updateUI(response);
     });
   });
