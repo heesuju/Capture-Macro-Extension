@@ -10,6 +10,7 @@ let state = {
   captureFirst: false,
   macroEnabled: false,
   savedRecordings: {},
+  activeRecordingName: '',
   createPdf: true
 };
 
@@ -48,6 +49,18 @@ function broadcastState() {
   chrome.runtime.sendMessage({ type: 'STATE_UPDATE', state }).catch(() => {});
 }
 
+function generateRecordingName() {
+  const now = new Date();
+  const pad = (n) => String(n).padStart(2, '0');
+  const base = `Recording ${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
+  let name = base;
+  let suffix = 1;
+  while (state.savedRecordings[name]) {
+    name = `${base} (${suffix++})`;
+  }
+  return name;
+}
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.command === 'getState') {
     sendResponse(state);
@@ -55,8 +68,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     state.isRecording = !state.isRecording;
     if (state.isRecording) {
       lastActionTime = Date.now();
+    } else if (!state.activeRecordingName && state.actions.length > 0) {
+      // Auto-save a freshly recorded macro and select it
+      const name = generateRecordingName();
+      state.savedRecordings[name] = state.actions;
+      state.activeRecordingName = name;
+      chrome.storage.local.set({ savedRecordings: state.savedRecordings });
     }
-    
+
     chrome.tabs.query({active: true, lastFocusedWindow: true}, function(tabs) {
       if (tabs[0]) {
         const target = { tabId: tabs[0].id };
@@ -117,7 +136,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     sendResponse(state);
   } else if (message.command === 'clearActions') {
     state.actions = [];
-    
+    state.activeRecordingName = '';
+
     chrome.tabs.query({active: true, lastFocusedWindow: true}, function(tabs) {
       if (tabs[0]) {
         chrome.debugger.detach({tabId: tabs[0].id}).catch(() => {});
@@ -174,6 +194,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   } else if (message.command === 'saveRecording') {
     if (message.name && state.actions.length > 0) {
       state.savedRecordings[message.name] = state.actions;
+      state.activeRecordingName = message.name;
       chrome.storage.local.set({savedRecordings: state.savedRecordings});
       broadcastState();
     }
@@ -181,12 +202,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   } else if (message.command === 'loadRecording') {
     if (message.name && state.savedRecordings[message.name]) {
       state.actions = state.savedRecordings[message.name];
+      state.activeRecordingName = message.name;
       broadcastState();
     }
     sendResponse(state);
   } else if (message.command === 'deleteRecording') {
     if (message.name && state.savedRecordings[message.name]) {
       delete state.savedRecordings[message.name];
+      if (state.activeRecordingName === message.name) {
+        state.activeRecordingName = '';
+      }
       chrome.storage.local.set({savedRecordings: state.savedRecordings});
       broadcastState();
     }

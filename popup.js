@@ -46,8 +46,6 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   let currentState = {};
-  let hasUnsavedRecording = false; // true after recording stops before saving
-  let prevIsRecording = false;
 
   // ── Apply Settings ────────────────────────────────────
   function applyLanguage(lang) {
@@ -154,7 +152,9 @@ document.addEventListener('DOMContentLoaded', () => {
   function setMacroOpen(open) {
     macroEnabledToggle.checked = open;
     macroPanel.classList.toggle('open', open);
-    chrome.runtime.sendMessage({ command: 'updateMacroEnabled', macroEnabled: open });
+    chrome.runtime.sendMessage({ command: 'updateMacroEnabled', macroEnabled: open }, (response) => {
+      if (response) updateUI(response);
+    });
   }
 
   // Fix: stop propagation from the toggle switch label so it doesn't double-fire
@@ -169,19 +169,29 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   // ── Macro panel: show/hide sections ──────────────────
-  function refreshMacroPanelSections() {
-    const isNew = savedRecordingsSelect.value === '';
-    const isRecording = currentState.isRecording || false;
+  function isNewRecordingSelected() {
+    return !currentState.activeRecordingName;
+  }
 
-    // Record section only visible in New mode
+  // Run button doubles as Record/Stop Recording while macro is on and
+  // a new (unsaved) recording is selected.
+  function isRunButtonRecordMode() {
+    return (currentState.macroEnabled || false) && isNewRecordingSelected();
+  }
+
+  function refreshMacroPanelSections() {
+    const isNew = isNewRecordingSelected();
+
+    // Record section (action counter) only visible in New mode.
+    // The Record/Stop button itself lives on the main Run button instead.
     recordSection.style.display = isNew ? 'flex' : 'none';
+    btnRecord.style.display = 'none';
 
     // Delete button only when a saved recording is selected
     btnDelete.style.display = isNew ? 'none' : 'inline-flex';
 
-    // Save row: only after a new recording was stopped
-    const showSave = isNew && hasUnsavedRecording && !isRecording;
-    saveSection.style.display = showSave ? 'flex' : 'none';
+    // Recordings are auto-saved on stop, so the manual save row is unused
+    saveSection.style.display = 'none';
   }
 
   // ── Area buttons ──────────────────────────────────────
@@ -215,7 +225,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // ── Recordings select — auto-load on change ───────────
   savedRecordingsSelect.addEventListener('change', () => {
-    hasUnsavedRecording = false;
     const name = savedRecordingsSelect.value;
     if (name) {
       chrome.runtime.sendMessage({ command: 'loadRecording', name }, (response) => {
@@ -232,12 +241,6 @@ document.addEventListener('DOMContentLoaded', () => {
   // ── UI update ─────────────────────────────────────────
   function updateUI(state) {
     currentState = state;
-
-    // Detect when recording just stopped → mark unsaved
-    if (prevIsRecording && !state.isRecording && state.actions && state.actions.length > 0) {
-      hasUnsavedRecording = true;
-    }
-    prevIsRecording = state.isRecording;
 
     actionCount.textContent = (state.actions && state.actions.length) || 0;
 
@@ -264,17 +267,18 @@ document.addEventListener('DOMContentLoaded', () => {
       macroBadge.style.display = 'none';
     }
 
-    // Rebuild recordings dropdown (preserve selection)
+    // Rebuild recordings dropdown, selection follows the active recording
     if (state.savedRecordings && document.activeElement !== savedRecordingsSelect) {
-      const currentVal = savedRecordingsSelect.value;
+      const activeName = state.activeRecordingName || '';
       savedRecordingsSelect.innerHTML = `<option value="">${t('newRecording')}</option>`;
       for (const name of Object.keys(state.savedRecordings)) {
         const option = document.createElement('option');
         option.value = name;
         option.textContent = name;
-        if (name === currentVal) option.selected = true;
+        if (name === activeName) option.selected = true;
         savedRecordingsSelect.appendChild(option);
       }
+      savedRecordingsSelect.value = activeName;
     }
 
     // Macro panel section visibility
@@ -308,10 +312,11 @@ document.addEventListener('DOMContentLoaded', () => {
       statusDisplay.textContent = t('statusRecording');
       statusDisplay.className = 'status recording';
       statusDisplay.classList.remove('hidden');
-      btnRecord.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="1"/></svg> <span>${t('stopBtn')}</span>`;
-      btnRecord.className = 'btn danger record-btn';
       btnRecord.disabled = false;
-      btnPlay.disabled = true;
+      // Run button doubles as the Stop Recording control
+      btnPlay.innerHTML = `<svg class="btn-icon" width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="1"/></svg> <span class="btn-play-text">${t('stopBtn')}</span>`;
+      btnPlay.className = 'btn danger';
+      btnPlay.disabled = false;
 
     } else if (state.isPlaying) {
       statusDisplay.textContent = t('statusPlaying');
@@ -322,11 +327,19 @@ document.addEventListener('DOMContentLoaded', () => {
       btnPlay.className = 'btn danger';
       btnPlay.disabled = false;
 
+    } else if (isRunButtonRecordMode()) {
+      // Idle, macro on, new recording selected — Run acts as Record
+      statusDisplay.className = 'status hidden';
+      btnRecord.disabled = false;
+      btnPlay.innerHTML = `<svg class="btn-icon" width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="8"/></svg> <span class="btn-play-text">${t('recordBtn')}</span>`;
+      btnPlay.className = 'btn primary';
+      btnPlay.disabled = false;
+      btnSetArea.disabled = false;
+      areaBtns.forEach(b => b.disabled = false);
+
     } else {
       // Idle
       statusDisplay.className = 'status hidden';
-      btnRecord.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="8"/></svg> <span>${t('recordBtn')}</span>`;
-      btnRecord.className = 'btn primary record-btn';
       btnRecord.disabled = false;
       btnPlay.innerHTML = `<svg class="btn-icon" width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg> <span class="btn-play-text">${t('runBtn')}</span>`;
       btnPlay.className = 'btn success';
@@ -350,8 +363,16 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   btnPlay.addEventListener('click', () => {
-    if (currentState && currentState.isPlaying) {
+    if (currentState && currentState.isRecording) {
+      chrome.runtime.sendMessage({ command: 'toggleRecording' }, (response) => {
+        if (response) updateUI(response);
+      });
+    } else if (currentState && currentState.isPlaying) {
       chrome.runtime.sendMessage({ command: 'stopPlayback' }, (response) => {
+        if (response) updateUI(response);
+      });
+    } else if (isRunButtonRecordMode()) {
+      chrome.runtime.sendMessage({ command: 'toggleRecording' }, (response) => {
         if (response) updateUI(response);
       });
     } else {
@@ -379,7 +400,6 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!name) return;
     chrome.runtime.sendMessage({ command: 'saveRecording', name }, (response) => {
       if (response) {
-        hasUnsavedRecording = false;
         saveNameInput.value = '';
         updateUI(response);
         savedRecordingsSelect.value = name;
