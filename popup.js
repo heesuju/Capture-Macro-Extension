@@ -8,12 +8,34 @@ document.addEventListener('DOMContentLoaded', () => {
   const actionCount = document.getElementById('actionCount');
   const areaStatus = document.getElementById('areaStatus');
   const prefixInput = document.getElementById('prefixInput');
+  const captureFirstCheckbox = document.getElementById('captureFirstCheckbox');
+  const btnSave = document.getElementById('btnSave');
+  const btnLoad = document.getElementById('btnLoad');
+  const btnDelete = document.getElementById('btnDelete');
+  const saveNameInput = document.getElementById('saveNameInput');
+  const savedRecordingsSelect = document.getElementById('savedRecordingsSelect');
 
   function updateUI(state) {
     actionCount.textContent = state.actions.length;
     
     if (document.activeElement !== prefixInput) {
       prefixInput.value = state.prefix || '';
+    }
+    
+    if (document.activeElement !== captureFirstCheckbox) {
+      captureFirstCheckbox.checked = state.captureFirst || false;
+    }
+
+    if (state.savedRecordings && document.activeElement !== savedRecordingsSelect) {
+      const currentVal = savedRecordingsSelect.value;
+      savedRecordingsSelect.innerHTML = '<option value="">Select a recording...</option>';
+      for (const name of Object.keys(state.savedRecordings)) {
+        const option = document.createElement('option');
+        option.value = name;
+        option.textContent = `${name} (${state.savedRecordings[name].length} actions)`;
+        if (name === currentVal) option.selected = true;
+        savedRecordingsSelect.appendChild(option);
+      }
     }
     
     if (state.captureRect) {
@@ -108,6 +130,41 @@ document.addEventListener('DOMContentLoaded', () => {
 
   prefixInput.addEventListener('input', () => {
     chrome.runtime.sendMessage({ command: 'updatePrefix', prefix: prefixInput.value });
+  });
+
+  captureFirstCheckbox.addEventListener('change', () => {
+    chrome.runtime.sendMessage({ command: 'updateCaptureFirst', captureFirst: captureFirstCheckbox.checked });
+  });
+
+  btnSave.addEventListener('click', () => {
+    const name = saveNameInput.value.trim();
+    if (name) {
+      chrome.runtime.sendMessage({ command: 'saveRecording', name: name }, (response) => {
+        if (response) updateUI(response);
+        saveNameInput.value = '';
+      });
+    }
+  });
+
+  btnLoad.addEventListener('click', () => {
+    const name = savedRecordingsSelect.value;
+    if (name) {
+      chrome.runtime.sendMessage({ command: 'loadRecording', name: name }, (response) => {
+        if (response) updateUI(response);
+      });
+    }
+  });
+
+  btnDelete.addEventListener('click', () => {
+    const name = savedRecordingsSelect.value;
+    if (name) {
+      chrome.runtime.sendMessage({ command: 'deleteRecording', name: name }, (response) => {
+        if (response) {
+          updateUI(response);
+          savedRecordingsSelect.value = '';
+        }
+      });
+    }
   });
 
   // Listen for updates from background (like action recorded or playback ended)

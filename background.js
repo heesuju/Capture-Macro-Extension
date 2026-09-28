@@ -4,8 +4,16 @@ let state = {
   isSelectingArea: false,
   captureRect: null,
   prefix: '',
-  actions: []
+  actions: [],
+  captureFirst: false,
+  savedRecordings: {}
 };
+
+chrome.storage.local.get(['savedRecordings'], (result) => {
+  if (result.savedRecordings) {
+    state.savedRecordings = result.savedRecordings;
+  }
+});
 
 let lastActionTime = 0;
 let captureCount = 0;
@@ -124,9 +132,60 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   } else if (message.command === 'updatePrefix') {
     state.prefix = message.prefix;
     sendResponse(state);
+  } else if (message.command === 'updateCaptureFirst') {
+    state.captureFirst = message.captureFirst;
+    sendResponse(state);
+  } else if (message.command === 'saveRecording') {
+    if (message.name && state.actions.length > 0) {
+      state.savedRecordings[message.name] = state.actions;
+      chrome.storage.local.set({savedRecordings: state.savedRecordings});
+      broadcastState();
+    }
+    sendResponse(state);
+  } else if (message.command === 'loadRecording') {
+    if (message.name && state.savedRecordings[message.name]) {
+      state.actions = state.savedRecordings[message.name];
+      broadcastState();
+    }
+    sendResponse(state);
+  } else if (message.command === 'deleteRecording') {
+    if (message.name && state.savedRecordings[message.name]) {
+      delete state.savedRecordings[message.name];
+      chrome.storage.local.set({savedRecordings: state.savedRecordings});
+      broadcastState();
+    }
+    sendResponse(state);
   }
   return true;
 });
+
+async function captureScreenshot(tabs, tabId, prefix) {
+  // Hide rectangle before capturing
+  if (state.captureRect) {
+    await chrome.tabs.sendMessage(tabId, { command: 'hideRect' }).catch(() => {});
+    await sleep(100); // small buffer for DOM update
+  }
+
+  let dataUrl = await chrome.tabs.captureVisibleTab(tabs[0].windowId, {format: 'png'});
+  
+  // Show rectangle again
+  if (state.captureRect) {
+    await chrome.tabs.sendMessage(tabId, { command: 'showRect' }).catch(() => {});
+  }
+
+  if (state.captureRect) {
+    dataUrl = await cropImage(dataUrl, state.captureRect);
+  }
+  
+  captureCount++;
+  const filename = `${prefix}_${captureCount.toString().padStart(3, '0')}.png`;
+  
+  await chrome.downloads.download({
+    url: dataUrl,
+    filename: filename,
+    saveAs: false
+  });
+}
 
 async function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -205,6 +264,10 @@ async function startPlayback(prefix) {
       if (!state.isPlaying) break;
 
       if (action.type === 'click') {
+        if (state.captureFirst) {
+          await captureScreenshot(tabs, tabId, sessionPrefix);
+        }
+
         await chrome.debugger.sendCommand(target, 'Input.dispatchMouseEvent', {
           type: 'mousePressed',
           x: action.x,
@@ -221,34 +284,11 @@ async function startPlayback(prefix) {
           clickCount: 1
         });
 
-        await sleep(1000); 
-        if (!state.isPlaying) break;
-
-        // Hide rectangle before capturing
-        if (state.captureRect) {
-          await chrome.tabs.sendMessage(tabId, { command: 'hideRect' }).catch(() => {});
-          await sleep(100); // small buffer for DOM update
+        if (!state.captureFirst) {
+          await sleep(1000); 
+          if (!state.isPlaying) break;
+          await captureScreenshot(tabs, tabId, sessionPrefix);
         }
-
-        let dataUrl = await chrome.tabs.captureVisibleTab(tabs[0].windowId, {format: 'png'});
-        
-        // Show rectangle again
-        if (state.captureRect) {
-          await chrome.tabs.sendMessage(tabId, { command: 'showRect' }).catch(() => {});
-        }
-
-        if (state.captureRect) {
-          dataUrl = await cropImage(dataUrl, state.captureRect);
-        }
-        
-        captureCount++;
-        const filename = `${sessionPrefix}_${captureCount.toString().padStart(3, '0')}.png`;
-        
-        await chrome.downloads.download({
-          url: dataUrl,
-          filename: filename,
-          saveAs: false
-        });
       }
     }
     if (state.isPlaying) await sleep(500);

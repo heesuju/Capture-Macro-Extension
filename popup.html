@@ -17,6 +17,25 @@
 
     <div class="input-group">
       <input type="text" id="prefixInput" placeholder="Filename prefix (e.g., my_capture)" />
+      <label class="checkbox-label" style="display:flex; align-items:center; margin-top:5px; font-size:14px;">
+        <input type="checkbox" id="captureFirstCheckbox" style="margin-right:5px;">
+        Capture first, then action
+      </label>
+    </div>
+
+    <div class="save-load-group" style="margin-bottom: 15px; padding: 10px; background: #f5f5f5; border-radius: 5px; border: 1px solid #ddd;">
+      <h4 style="margin-top:0; margin-bottom:10px; font-size:14px; color:#333;">Saved Recordings</h4>
+      <div style="display:flex; gap:5px; margin-bottom:10px;">
+        <input type="text" id="saveNameInput" placeholder="Recording name" style="flex:1; padding:5px; border:1px solid #ccc; border-radius:3px;">
+        <button id="btnSave" class="btn primary" style="padding: 5px 10px; font-size:12px;">Save</button>
+      </div>
+      <div style="display:flex; gap:5px;">
+        <select id="savedRecordingsSelect" style="flex:1; padding:5px; border:1px solid #ccc; border-radius:3px;">
+          <option value="">Select a recording...</option>
+        </select>
+        <button id="btnLoad" class="btn secondary" style="padding: 5px 10px; font-size:12px;">Load</button>
+        <button id="btnDelete" class="btn danger" style="padding: 5px 10px; font-size:12px;">Delete</button>
+      </div>
     </div>
 
     <div class="controls">
