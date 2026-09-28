@@ -7,7 +7,7 @@ let state = {
   captureRect: null,
   prefix: '',
   actions: [],
-  captureFirst: false,
+  captureFirst: true,
   macroEnabled: false,
   savedRecordings: {},
   activeRecordingName: '',
