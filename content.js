@@ -9,7 +9,7 @@ if (!window.__autoCaptureInitialized) {
     if (response) {
       isRecording = response.isRecording;
       if (isRecording) {
-        console.log('Auto Capture: Initialized in recording state');
+        console.log('CheeseIt: Initialized in recording state');
       }
       if (response.captureRect) {
         drawPersistentRect(response.captureRect);
@@ -21,9 +21,9 @@ if (!window.__autoCaptureInitialized) {
     if (message.command === 'setRecordingState') {
       isRecording = message.isRecording;
       if (isRecording) {
-        console.log('Auto Capture: Recording started');
+        console.log('CheeseIt: Recording started');
       } else {
-        console.log('Auto Capture: Recording stopped');
+        console.log('CheeseIt: Recording stopped');
       }
       sendResponse({ success: true });
     } else if (message.command === 'startSelectingArea') {

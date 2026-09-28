@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "Auto Capture Macro",
+  "name": "CheeseIt",
   "version": "1.0",
   "description": "Records clicks and keystrokes and replays them, capturing screenshots.",
   "permissions": [

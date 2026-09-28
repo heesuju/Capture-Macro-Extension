@@ -1,3 +1,13 @@
+let currentSettings = {
+  language: 'en',
+  theme: 'dark'
+};
+
+function t(key) {
+  const lang = currentSettings.language || 'en';
+  return (I18N[lang] && I18N[lang][key]) || (I18N.en && I18N.en[key]) || key;
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   const btnRecord   = document.getElementById('btnRecord');
   const btnPlay     = document.getElementById('btnPlay');
@@ -20,9 +30,104 @@ document.addEventListener('DOMContentLoaded', () => {
   const recordSection = document.getElementById('recordSection');
   const saveSection = document.getElementById('saveSection');
 
+  const btnOpenSettings = document.getElementById('btnOpenSettings');
+  const btnBackToMain   = document.getElementById('btnBackToMain');
+  const mainView        = document.getElementById('mainView');
+  const settingsView    = document.getElementById('settingsView');
+
   let currentState = {};
   let hasUnsavedRecording = false; // true after recording stops before saving
   let prevIsRecording = false;
+
+  // ── Apply Settings ────────────────────────────────────
+  function applyLanguage(lang) {
+    currentSettings.language = lang;
+    chrome.storage.local.set({ settings: currentSettings });
+
+    // Update static elements with data-i18n
+    document.querySelectorAll('[data-i18n]').forEach((el) => {
+      const key = el.getAttribute('data-i18n');
+      if (key && I18N[lang] && I18N[lang][key]) {
+        el.textContent = I18N[lang][key];
+      }
+    });
+
+    // Update inputs with data-i18n-placeholder
+    document.querySelectorAll('[data-i18n-placeholder]').forEach((el) => {
+      const key = el.getAttribute('data-i18n-placeholder');
+      if (key && I18N[lang] && I18N[lang][key]) {
+        el.placeholder = I18N[lang][key];
+      }
+    });
+
+    // Update elements with data-i18n-title
+    document.querySelectorAll('[data-i18n-title]').forEach((el) => {
+      const key = el.getAttribute('data-i18n-title');
+      if (key && I18N[lang] && I18N[lang][key]) {
+        el.title = I18N[lang][key];
+      }
+    });
+
+    // Update segmented buttons for language
+    document.querySelectorAll('.segment-btn[data-lang]').forEach((btn) => {
+      btn.classList.toggle('active', btn.dataset.lang === lang);
+    });
+
+    // Refresh dynamic UI elements
+    if (currentState && Object.keys(currentState).length > 0) {
+      updateUI(currentState);
+    }
+  }
+
+  function applyTheme(theme) {
+    currentSettings.theme = theme;
+    chrome.storage.local.set({ settings: currentSettings });
+
+    if (theme === 'light') {
+      document.body.classList.add('theme-light');
+    } else {
+      document.body.classList.remove('theme-light');
+    }
+
+    // Update segmented buttons for theme
+    document.querySelectorAll('.segment-btn[data-theme]').forEach((btn) => {
+      btn.classList.toggle('active', btn.dataset.theme === theme);
+    });
+  }
+
+  // Load saved settings
+  chrome.storage.local.get(['settings'], (result) => {
+    if (result && result.settings) {
+      if (result.settings.language) currentSettings.language = result.settings.language;
+      if (result.settings.theme) currentSettings.theme = result.settings.theme;
+    }
+    applyTheme(currentSettings.theme);
+    applyLanguage(currentSettings.language);
+  });
+
+  // Settings view navigation
+  btnOpenSettings.addEventListener('click', () => {
+    mainView.classList.remove('active');
+    settingsView.classList.add('active');
+  });
+
+  btnBackToMain.addEventListener('click', () => {
+    settingsView.classList.remove('active');
+    mainView.classList.add('active');
+  });
+
+  // Settings option listeners
+  document.querySelectorAll('.segment-btn[data-lang]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      applyLanguage(btn.dataset.lang);
+    });
+  });
+
+  document.querySelectorAll('.segment-btn[data-theme]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      applyTheme(btn.dataset.theme);
+    });
+  });
 
   // ── Macro toggle ──────────────────────────────────────
   function setMacroOpen(open) {
@@ -34,7 +139,6 @@ document.addEventListener('DOMContentLoaded', () => {
   // Fix: stop propagation from the toggle switch label so it doesn't double-fire
   macroToggleRow.addEventListener('click', (e) => {
     if (e.target.closest('.toggle-switch')) return; // native label handles the checkbox
-    // Clicked elsewhere on the row — manually flip
     macroEnabledToggle.checked = !macroEnabledToggle.checked;
     setMacroOpen(macroEnabledToggle.checked);
   });
@@ -74,7 +178,7 @@ document.addEventListener('DOMContentLoaded', () => {
         });
       } else {
         btnSetArea.style.display = 'block';
-        btnSetArea.textContent = 'Draw Area on Page';
+        btnSetArea.textContent = t('drawAreaBtn');
       }
     });
   });
@@ -109,12 +213,12 @@ document.addEventListener('DOMContentLoaded', () => {
     currentState = state;
 
     // Detect when recording just stopped → mark unsaved
-    if (prevIsRecording && !state.isRecording && state.actions.length > 0) {
+    if (prevIsRecording && !state.isRecording && state.actions && state.actions.length > 0) {
       hasUnsavedRecording = true;
     }
     prevIsRecording = state.isRecording;
 
-    actionCount.textContent = state.actions.length;
+    actionCount.textContent = (state.actions && state.actions.length) || 0;
 
     if (document.activeElement !== prefixInput) {
       prefixInput.value = state.prefix || '';
@@ -129,7 +233,7 @@ document.addEventListener('DOMContentLoaded', () => {
     macroPanel.classList.toggle('open', macroOn);
 
     // Badge
-    if (macroOn && state.actions.length > 0) {
+    if (macroOn && state.actions && state.actions.length > 0) {
       macroBadge.style.display = 'inline';
       macroBadge.textContent = state.actions.length;
     } else {
@@ -139,7 +243,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // Rebuild recordings dropdown (preserve selection)
     if (state.savedRecordings && document.activeElement !== savedRecordingsSelect) {
       const currentVal = savedRecordingsSelect.value;
-      savedRecordingsSelect.innerHTML = '<option value="">＋ New Recording</option>';
+      savedRecordingsSelect.innerHTML = `<option value="">${t('newRecording')}</option>`;
       for (const name of Object.keys(state.savedRecordings)) {
         const option = document.createElement('option');
         option.value = name;
@@ -156,19 +260,19 @@ document.addEventListener('DOMContentLoaded', () => {
     if (state.captureRect) {
       const activeRatio = state.captureRatio ? String(state.captureRatio) : 'free';
       setActiveAreaBtn(activeRatio);
-      areaStatus.textContent = `Custom (${state.captureRect.width}×${state.captureRect.height})`;
+      areaStatus.textContent = `${t('customArea')} (${state.captureRect.width}×${state.captureRect.height})`;
       btnSetArea.style.display = 'block';
-      btnSetArea.textContent = 'Redraw Area';
+      btnSetArea.textContent = t('redrawAreaBtn');
     } else {
       setActiveAreaBtn('full');
-      areaStatus.textContent = 'Full Page';
+      areaStatus.textContent = t('fullPage');
       btnSetArea.style.display = 'none';
-      btnSetArea.textContent = 'Draw Area on Page';
+      btnSetArea.textContent = t('drawAreaBtn');
     }
 
     // Global state modes
     if (state.isSelectingArea) {
-      statusDisplay.textContent = 'Draw Rectangle...';
+      statusDisplay.textContent = t('statusDraw');
       statusDisplay.className = 'status recording';
       statusDisplay.classList.remove('hidden');
       btnRecord.disabled = true;
@@ -177,30 +281,30 @@ document.addEventListener('DOMContentLoaded', () => {
       areaBtns.forEach(b => b.disabled = true);
 
     } else if (state.isRecording) {
-      statusDisplay.textContent = 'Recording...';
+      statusDisplay.textContent = t('statusRecording');
       statusDisplay.className = 'status recording';
       statusDisplay.classList.remove('hidden');
-      btnRecord.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="1"/></svg> Stop`;
+      btnRecord.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="1"/></svg> <span>${t('stopBtn')}</span>`;
       btnRecord.className = 'btn danger record-btn';
       btnRecord.disabled = false;
       btnPlay.disabled = true;
 
     } else if (state.isPlaying) {
-      statusDisplay.textContent = 'Playing...';
+      statusDisplay.textContent = t('statusPlaying');
       statusDisplay.className = 'status playing';
       statusDisplay.classList.remove('hidden');
       btnRecord.disabled = true;
-      btnPlay.innerHTML = `<svg class="btn-icon" width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="1"/></svg> Stop`;
+      btnPlay.innerHTML = `<svg class="btn-icon" width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="1"/></svg> <span class="btn-play-text">${t('stopBtn')}</span>`;
       btnPlay.className = 'btn danger';
       btnPlay.disabled = false;
 
     } else {
       // Idle
       statusDisplay.className = 'status hidden';
-      btnRecord.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="8"/></svg> Record`;
+      btnRecord.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="8"/></svg> <span>${t('recordBtn')}</span>`;
       btnRecord.className = 'btn primary record-btn';
       btnRecord.disabled = false;
-      btnPlay.innerHTML = `<svg class="btn-icon" width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg> Run`;
+      btnPlay.innerHTML = `<svg class="btn-icon" width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg> <span class="btn-play-text">${t('runBtn')}</span>`;
       btnPlay.className = 'btn success';
       btnPlay.disabled = false;
       btnSetArea.disabled = false;
@@ -222,7 +326,7 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   btnPlay.addEventListener('click', () => {
-    if (btnPlay.textContent.includes('Stop')) {
+    if (currentState && currentState.isPlaying) {
       chrome.runtime.sendMessage({ command: 'stopPlayback' }, (response) => {
         if (response) updateUI(response);
       });
@@ -249,7 +353,6 @@ document.addEventListener('DOMContentLoaded', () => {
       if (response) {
         hasUnsavedRecording = false;
         saveNameInput.value = '';
-        // After saving, select the new recording in the dropdown
         updateUI(response);
         savedRecordingsSelect.value = name;
         refreshMacroPanelSections();
