@@ -32,8 +32,17 @@ document.addEventListener('DOMContentLoaded', () => {
 
   const btnOpenSettings = document.getElementById('btnOpenSettings');
   const btnBackToMain   = document.getElementById('btnBackToMain');
+  const headerTitleMain = document.getElementById('headerTitleMain');
+  const headerTitleSettings = document.getElementById('headerTitleSettings');
+  const appVersion      = document.getElementById('appVersion');
   const mainView        = document.getElementById('mainView');
   const settingsView    = document.getElementById('settingsView');
+
+  // Set version from manifest
+  if (appVersion) {
+    const version = chrome.runtime.getManifest()?.version || '1.0.0';
+    appVersion.textContent = `CheeseIt v${version}`;
+  }
 
   let currentState = {};
   let hasUnsavedRecording = false; // true after recording stops before saving
@@ -106,15 +115,26 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   // Settings view navigation
-  btnOpenSettings.addEventListener('click', () => {
-    mainView.classList.remove('active');
-    settingsView.classList.add('active');
-  });
+  function setSettingsView(open) {
+    if (open) {
+      mainView.classList.remove('active');
+      settingsView.classList.add('active');
+      headerTitleMain.style.display = 'none';
+      headerTitleSettings.style.display = 'flex';
+      btnOpenSettings.style.display = 'none';
+      btnBackToMain.style.display = 'flex';
+    } else {
+      settingsView.classList.remove('active');
+      mainView.classList.add('active');
+      headerTitleMain.style.display = 'flex';
+      headerTitleSettings.style.display = 'none';
+      btnOpenSettings.style.display = 'flex';
+      btnBackToMain.style.display = 'none';
+    }
+  }
 
-  btnBackToMain.addEventListener('click', () => {
-    settingsView.classList.remove('active');
-    mainView.classList.add('active');
-  });
+  btnOpenSettings.addEventListener('click', () => setSettingsView(true));
+  btnBackToMain.addEventListener('click', () => setSettingsView(false));
 
   // Settings option listeners
   document.querySelectorAll('.segment-btn[data-lang]').forEach((btn) => {

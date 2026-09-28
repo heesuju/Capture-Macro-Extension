@@ -80,11 +80,16 @@ body {
 .app-header-title {
   display: flex;
   align-items: center;
-  gap: 8px;
   font-weight: 700;
   font-size: 0.92rem;
   color: var(--text-color);
   letter-spacing: 0.3px;
+}
+
+.header-title-content {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .app-header-title svg {
@@ -513,22 +518,15 @@ select {
 }
 
 /* ── Settings View ───────────────────────────────────── */
-.settings-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 8px 14px;
-  border-bottom: 1px solid var(--border-color);
-  background: var(--bg-surface);
-  flex-shrink: 0;
-  transition: background-color 0.25s ease, border-color 0.25s ease;
-}
-
-.settings-header h3 {
-  margin: 0;
-  font-size: 0.95rem;
-  font-weight: 700;
-  color: var(--text-color);
+.settings-footer {
+  margin-top: auto;
+  padding: 16px 0 8px;
+  text-align: center;
+  font-size: 0.76rem;
+  color: var(--text-muted);
+  opacity: 0.75;
+  letter-spacing: 0.3px;
+  user-select: none;
 }
 
 .settings-content {

@@ -19,6 +19,26 @@ chrome.storage.local.get(['savedRecordings'], (result) => {
 let lastActionTime = 0;
 let captureCount = 0;
 let sessionPrefix = '';
+let currentSubfolder = '';
+
+function getTodayDateKey() {
+  const now = new Date();
+  const yyyy = String(now.getFullYear());
+  const mm = String(now.getMonth() + 1).padStart(2, '0');
+  const dd = String(now.getDate()).padStart(2, '0');
+  return `${yyyy}${mm}${dd}`;
+}
+
+async function getNextRunSubfolder() {
+  const today = getTodayDateKey();
+  const data = await chrome.storage.local.get(['runDate', 'runIndex']);
+  let nextIndex = 1;
+  if (data && data.runDate === today && typeof data.runIndex === 'number') {
+    nextIndex = data.runIndex + 1;
+  }
+  await chrome.storage.local.set({ runDate: today, runIndex: nextIndex });
+  return `${today}_${nextIndex}`;
+}
 
 function broadcastState() {
   chrome.runtime.sendMessage({ type: 'STATE_UPDATE', state }).catch(() => {});
@@ -188,10 +208,11 @@ async function captureScreenshot(tabs, tabId, prefix) {
   
   captureCount++;
   const filename = `${prefix}_${captureCount.toString().padStart(3, '0')}.png`;
+  const filePath = currentSubfolder ? `${currentSubfolder}/${filename}` : filename;
   
   await chrome.downloads.download({
     url: dataUrl,
-    filename: filename,
+    filename: filePath,
     saveAs: false
   });
 }
@@ -232,6 +253,8 @@ async function takeSingleCapture(prefix) {
   state.isPlaying = true;
   broadcastState();
 
+  currentSubfolder = await getNextRunSubfolder();
+
   if (prefix && prefix.length > 0) {
     sessionPrefix = prefix;
     state.prefix = prefix;
@@ -257,6 +280,8 @@ async function startPlayback(prefix) {
   state.isPlaying = true;
   state.isRecording = false; // Ensure recording is off
   
+  currentSubfolder = await getNextRunSubfolder();
+
   if (prefix && prefix.length > 0) {
     sessionPrefix = prefix;
     state.prefix = prefix;
