@@ -290,18 +290,19 @@ async function startPlayback(prefix) {
   captureCount = 0;
 
   while (state.isPlaying) {
+    // Capture BEFORE all actions
+    if (state.captureFirst) {
+      await captureScreenshot(tabs, tabId, sessionPrefix);
+    }
+
     for (let i = 0; i < state.actions.length; i++) {
       if (!state.isPlaying) break;
       const action = state.actions[i];
-      
+
       await sleep(action.delay);
       if (!state.isPlaying) break;
 
       if (action.type === 'click') {
-        if (state.captureFirst) {
-          await captureScreenshot(tabs, tabId, sessionPrefix);
-        }
-
         await chrome.debugger.sendCommand(target, 'Input.dispatchMouseEvent', {
           type: 'mousePressed',
           x: action.x,
@@ -309,7 +310,7 @@ async function startPlayback(prefix) {
           button: 'left',
           clickCount: 1
         });
-        
+
         await chrome.debugger.sendCommand(target, 'Input.dispatchMouseEvent', {
           type: 'mouseReleased',
           x: action.x,
@@ -317,14 +318,18 @@ async function startPlayback(prefix) {
           button: 'left',
           clickCount: 1
         });
-
-        if (!state.captureFirst) {
-          await sleep(1000); 
-          if (!state.isPlaying) break;
-          await captureScreenshot(tabs, tabId, sessionPrefix);
-        }
       }
     }
+
+    if (!state.isPlaying) break;
+
+    // Capture AFTER all actions (wait 1s for page to settle)
+    if (!state.captureFirst) {
+      await sleep(1000);
+      if (!state.isPlaying) break;
+      await captureScreenshot(tabs, tabId, sessionPrefix);
+    }
+
     if (state.isPlaying) await sleep(500);
   }
 
