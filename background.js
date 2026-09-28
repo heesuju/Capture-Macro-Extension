@@ -309,7 +309,7 @@ async function startPlayback(prefix) {
           y: action.y,
           button: 'left',
           clickCount: 1
-        });
+        }).catch(() => {});
 
         await chrome.debugger.sendCommand(target, 'Input.dispatchMouseEvent', {
           type: 'mouseReleased',
@@ -317,7 +317,9 @@ async function startPlayback(prefix) {
           y: action.y,
           button: 'left',
           clickCount: 1
-        });
+        }).catch(() => {});
+      } else if (action.type === 'keydown') {
+        await dispatchKeyAction(target, action);
       }
     }
 
@@ -335,6 +337,89 @@ async function startPlayback(prefix) {
 
   await chrome.debugger.detach(target).catch(() => {});
   endPlayback();
+}
+
+async function dispatchKeyAction(target, action) {
+  const modifiers = action.modifiers || 0;
+  const isCtrlOrCmd = (modifiers & 2) !== 0 || (modifiers & 4) !== 0;
+  const isPrintable = action.key && action.key.length === 1 && !isCtrlOrCmd;
+
+  if (isPrintable) {
+    await chrome.debugger.sendCommand(target, 'Input.dispatchKeyEvent', {
+      type: 'keyDown',
+      modifiers: modifiers,
+      text: action.key,
+      unmodifiedText: action.key,
+      key: action.key,
+      code: action.code,
+      windowsVirtualKeyCode: action.keyCode
+    }).catch(() => {});
+
+    await chrome.debugger.sendCommand(target, 'Input.dispatchKeyEvent', {
+      type: 'char',
+      modifiers: modifiers,
+      text: action.key,
+      unmodifiedText: action.key,
+      key: action.key,
+      code: action.code,
+      windowsVirtualKeyCode: action.keyCode
+    }).catch(() => {});
+
+    await chrome.debugger.sendCommand(target, 'Input.dispatchKeyEvent', {
+      type: 'keyUp',
+      modifiers: modifiers,
+      key: action.key,
+      code: action.code,
+      windowsVirtualKeyCode: action.keyCode
+    }).catch(() => {});
+
+  } else if (action.key === 'Enter') {
+    await chrome.debugger.sendCommand(target, 'Input.dispatchKeyEvent', {
+      type: 'rawKeyDown',
+      modifiers: modifiers,
+      text: '\r',
+      unmodifiedText: '\r',
+      key: 'Enter',
+      code: action.code || 'Enter',
+      windowsVirtualKeyCode: 13
+    }).catch(() => {});
+
+    await chrome.debugger.sendCommand(target, 'Input.dispatchKeyEvent', {
+      type: 'char',
+      modifiers: modifiers,
+      text: '\r',
+      unmodifiedText: '\r',
+      key: 'Enter',
+      code: action.code || 'Enter',
+      windowsVirtualKeyCode: 13
+    }).catch(() => {});
+
+    await chrome.debugger.sendCommand(target, 'Input.dispatchKeyEvent', {
+      type: 'keyUp',
+      modifiers: modifiers,
+      key: 'Enter',
+      code: action.code || 'Enter',
+      windowsVirtualKeyCode: 13
+    }).catch(() => {});
+
+  } else {
+    // Non-printable or shortcut key (e.g. Backspace, Tab, Arrows, Esc, or Ctrl+A/Ctrl+C)
+    await chrome.debugger.sendCommand(target, 'Input.dispatchKeyEvent', {
+      type: 'rawKeyDown',
+      modifiers: modifiers,
+      key: action.key,
+      code: action.code,
+      windowsVirtualKeyCode: action.keyCode
+    }).catch(() => {});
+
+    await chrome.debugger.sendCommand(target, 'Input.dispatchKeyEvent', {
+      type: 'keyUp',
+      modifiers: modifiers,
+      key: action.key,
+      code: action.code,
+      windowsVirtualKeyCode: action.keyCode
+    }).catch(() => {});
+  }
 }
 
 function endPlayback() {

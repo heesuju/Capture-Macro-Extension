@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Auto Capture Macro",
   "version": "1.0",
-  "description": "Records clicks and replays them, capturing a screenshot after each click.",
+  "description": "Records clicks and keystrokes and replays them, capturing screenshots.",
   "permissions": [
     "activeTab",
     "scripting",

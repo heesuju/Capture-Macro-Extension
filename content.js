@@ -1,60 +1,86 @@
-let isRecording = false;
-let captureRectDiv = null;
+if (!window.__autoCaptureInitialized) {
+  window.__autoCaptureInitialized = true;
 
-// Fetch initial state in case we were just injected
-chrome.runtime.sendMessage({ command: 'getState' }, (response) => {
-  if (response) {
-    isRecording = response.isRecording;
-    if (isRecording) {
-      console.log('Auto Capture: Initialized in recording state');
-    }
-    if (response.captureRect) {
-      drawPersistentRect(response.captureRect);
-    }
-  }
-});
+  let isRecording = false;
+  let captureRectDiv = null;
 
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message.command === 'setRecordingState') {
-    isRecording = message.isRecording;
-    if (isRecording) {
-      console.log('Auto Capture: Recording started');
-    } else {
-      console.log('Auto Capture: Recording stopped');
-    }
-    sendResponse({ success: true });
-  } else if (message.command === 'startSelectingArea') {
-    startSelection(message.ratio);
-    sendResponse({ success: true });
-  } else if (message.command === 'clearArea') {
-    if (captureRectDiv) {
-      captureRectDiv.remove();
-      captureRectDiv = null;
-    }
-    sendResponse({ success: true });
-  } else if (message.command === 'hideRect') {
-    if (captureRectDiv) captureRectDiv.style.display = 'none';
-    sendResponse({ success: true });
-  } else if (message.command === 'showRect') {
-    if (captureRectDiv) captureRectDiv.style.display = 'block';
-    sendResponse({ success: true });
-  }
-});
-
-document.addEventListener('mousedown', (e) => {
-  if (!isRecording) return;
-  
-  // Send the click coordinates to the background script
-  chrome.runtime.sendMessage({
-    command: 'recordAction',
-    action: {
-      type: 'click',
-      x: e.clientX,
-      y: e.clientY,
-      timestamp: Date.now()
+  // Fetch initial state in case we were just injected
+  chrome.runtime.sendMessage({ command: 'getState' }, (response) => {
+    if (response) {
+      isRecording = response.isRecording;
+      if (isRecording) {
+        console.log('Auto Capture: Initialized in recording state');
+      }
+      if (response.captureRect) {
+        drawPersistentRect(response.captureRect);
+      }
     }
   });
-}, true); // Use capture phase to intercept as early as possible
+
+  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    if (message.command === 'setRecordingState') {
+      isRecording = message.isRecording;
+      if (isRecording) {
+        console.log('Auto Capture: Recording started');
+      } else {
+        console.log('Auto Capture: Recording stopped');
+      }
+      sendResponse({ success: true });
+    } else if (message.command === 'startSelectingArea') {
+      startSelection(message.ratio);
+      sendResponse({ success: true });
+    } else if (message.command === 'clearArea') {
+      if (captureRectDiv) {
+        captureRectDiv.remove();
+        captureRectDiv = null;
+      }
+      sendResponse({ success: true });
+    } else if (message.command === 'hideRect') {
+      if (captureRectDiv) captureRectDiv.style.display = 'none';
+      sendResponse({ success: true });
+    } else if (message.command === 'showRect') {
+      if (captureRectDiv) captureRectDiv.style.display = 'block';
+      sendResponse({ success: true });
+    }
+  });
+
+  document.addEventListener('mousedown', (e) => {
+    if (!isRecording) return;
+    
+    // Send the click coordinates to the background script
+    chrome.runtime.sendMessage({
+      command: 'recordAction',
+      action: {
+        type: 'click',
+        x: e.clientX,
+        y: e.clientY,
+        timestamp: Date.now()
+      }
+    });
+  }, true); // Use capture phase to intercept as early as possible
+
+  document.addEventListener('keydown', (e) => {
+    if (!isRecording) return;
+
+    // Skip standalone modifier keys to avoid cluttering recorded actions
+    if (['Shift', 'Control', 'Alt', 'Meta'].includes(e.key)) {
+      return;
+    }
+
+    const modifiers = (e.altKey ? 1 : 0) | (e.ctrlKey ? 2 : 0) | (e.metaKey ? 4 : 0) | (e.shiftKey ? 8 : 0);
+
+    chrome.runtime.sendMessage({
+      command: 'recordAction',
+      action: {
+        type: 'keydown',
+        key: e.key,
+        code: e.code,
+        keyCode: e.keyCode || e.which || 0,
+        modifiers: modifiers,
+        timestamp: Date.now()
+      }
+    });
+  }, true);
 
 
 function drawPersistentRect(rect) {
@@ -177,3 +203,5 @@ function startSelection(ratio) {
   overlay.addEventListener('mousemove', onMouseMove);
   overlay.addEventListener('mouseup', onMouseUp);
 }
+}
+
