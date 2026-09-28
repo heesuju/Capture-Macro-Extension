@@ -309,9 +309,8 @@ document.addEventListener('DOMContentLoaded', () => {
       areaBtns.forEach(b => b.disabled = true);
 
     } else if (state.isRecording) {
-      statusDisplay.textContent = t('statusRecording');
-      statusDisplay.className = 'status recording';
-      statusDisplay.classList.remove('hidden');
+      // No status label — the Stop button and action counter already make this clear
+      statusDisplay.className = 'status hidden';
       btnRecord.disabled = false;
       // Run button doubles as the Stop Recording control
       btnPlay.innerHTML = `<svg class="btn-icon" width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="1"/></svg> <span class="btn-play-text">${t('stopBtn')}</span>`;

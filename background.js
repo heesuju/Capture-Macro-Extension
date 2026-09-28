@@ -45,7 +45,20 @@ async function getNextRunSubfolder() {
   return `${today}_${nextIndex}`;
 }
 
+function updateBadge() {
+  if (state.isRecording) {
+    chrome.action.setBadgeBackgroundColor({ color: '#e94560' });
+    chrome.action.setBadgeText({ text: state.actions.length > 0 ? String(state.actions.length) : '•' });
+  } else if (state.isPlaying) {
+    chrome.action.setBadgeBackgroundColor({ color: '#4caf50' });
+    chrome.action.setBadgeText({ text: '▶' });
+  } else {
+    chrome.action.setBadgeText({ text: '' });
+  }
+}
+
 function broadcastState() {
+  updateBadge();
   chrome.runtime.sendMessage({ type: 'STATE_UPDATE', state }).catch(() => {});
 }
 
