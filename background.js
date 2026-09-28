@@ -6,6 +6,7 @@ let state = {
   prefix: '',
   actions: [],
   captureFirst: false,
+  macroEnabled: false,
   savedRecordings: {}
 };
 
@@ -116,7 +117,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     sendResponse({success: true});
   } else if (message.command === 'startPlayback') {
     if (!state.isPlaying) {
-      if (state.actions.length === 0) {
+      if (!state.macroEnabled || state.actions.length === 0) {
         takeSingleCapture(message.prefix);
       } else {
         startPlayback(message.prefix);
@@ -139,6 +140,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     sendResponse(state);
   } else if (message.command === 'updateCaptureFirst') {
     state.captureFirst = message.captureFirst;
+    sendResponse(state);
+  } else if (message.command === 'updateMacroEnabled') {
+    state.macroEnabled = message.macroEnabled;
     sendResponse(state);
   } else if (message.command === 'saveRecording') {
     if (message.name && state.actions.length > 0) {

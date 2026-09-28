@@ -24,10 +24,10 @@ body {
 }
 
 .container {
-  padding: 20px;
+  padding: 18px;
   display: flex;
   flex-direction: column;
-  gap: 15px;
+  gap: 12px;
 }
 
 h2 {
@@ -65,60 +65,6 @@ h2 {
   color: var(--success-color);
 }
 
-/* Tabs */
-.tabs {
-  display: flex;
-  background: var(--bg-surface);
-  border-radius: var(--border-radius);
-  overflow: hidden;
-  margin-bottom: 5px;
-}
-
-.tab-btn {
-  flex: 1;
-  background: transparent;
-  border: none;
-  padding: 10px;
-  color: var(--text-muted);
-  cursor: pointer;
-  font-weight: 600;
-  font-size: 0.9rem;
-  transition: background-color 0.2s, color 0.2s;
-}
-
-.tab-btn:hover {
-  background: var(--bg-surface-hover);
-}
-
-.tab-btn.active {
-  background: var(--primary-color);
-  color: #fff;
-}
-
-.tab-content {
-  display: none;
-  flex-direction: column;
-  gap: 15px;
-}
-
-.tab-content.active {
-  display: flex;
-}
-
-/* Stats */
-.stats {
-  text-align: center;
-  font-size: 0.85rem;
-  color: var(--text-muted);
-  background: var(--bg-surface);
-  padding: 10px;
-  border-radius: var(--border-radius);
-}
-
-.stats strong {
-  color: var(--text-color);
-}
-
 /* Forms */
 .input-group {
   display: flex;
@@ -135,18 +81,22 @@ h2 {
   font-weight: 500;
 }
 
+.input-group label strong {
+  color: var(--text-color);
+}
+
 .checkbox-label {
   display: flex;
   align-items: center;
-  font-size: 0.85rem !important;
-  color: var(--text-color) !important;
+  font-size: 0.85rem;
+  color: var(--text-color);
   cursor: pointer;
-  margin-top: 5px;
+  gap: 8px;
 }
 
 .checkbox-label input {
-  margin-right: 8px;
   cursor: pointer;
+  accent-color: var(--accent-color);
 }
 
 input[type="text"], select {
@@ -167,80 +117,6 @@ input[type="text"]:focus, select:focus {
 select {
   appearance: none;
   cursor: pointer;
-}
-
-/* Controls */
-.controls {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.btn {
-  border: none;
-  border-radius: 6px;
-  padding: 12px 15px;
-  font-size: 0.9rem;
-  font-weight: 600;
-  cursor: pointer;
-  transition: background-color 0.2s, transform 0.1s, opacity 0.2s;
-  color: white;
-}
-
-.btn.small {
-  padding: 8px 12px;
-  font-size: 0.8rem;
-}
-
-.btn:active:not(:disabled) {
-  transform: scale(0.97);
-}
-
-.btn:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
-.btn.primary { background-color: var(--primary-color); }
-.btn.primary:hover:not(:disabled) { background-color: var(--primary-hover); }
-
-.btn.secondary { background-color: var(--bg-surface); border: 1px solid rgba(255,255,255,0.1); }
-.btn.secondary:hover:not(:disabled) { background-color: var(--bg-surface-hover); }
-
-.btn.danger { background-color: var(--danger-color); }
-.btn.danger:hover:not(:disabled) { background-color: var(--danger-hover); }
-
-.btn.success { background-color: var(--success-color); }
-.btn.success:hover:not(:disabled) { background-color: var(--success-hover); }
-
-/* Save/Load Group */
-.save-load-group {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  background: var(--bg-surface);
-  padding: 15px;
-  border-radius: var(--border-radius);
-  border: 1px solid rgba(255,255,255,0.05);
-}
-
-.save-load-group h4 {
-  margin: 0;
-  font-size: 0.85rem;
-  color: var(--text-muted);
-  font-weight: 500;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
-
-.save-row, .load-row {
-  display: flex;
-  gap: 8px;
-}
-
-.save-row input, .load-row select {
-  flex: 1;
-  min-width: 0; /* allows flex item to shrink below content size */
 }
 
 /* Area Button Group */
@@ -285,11 +161,230 @@ select {
   flex-shrink: 0;
 }
 
+/* ── Macro Toggle Row ────────────────────────────────── */
+.macro-toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--bg-surface);
+  padding: 12px 14px;
+  border-radius: var(--border-radius);
+  cursor: pointer;
+  user-select: none;
+  border: 1px solid rgba(255,255,255,0.05);
+  transition: background 0.2s;
+}
+
+.macro-toggle-row:hover {
+  background: var(--bg-surface-hover);
+}
+
+.macro-toggle-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.macro-toggle-left svg {
+  color: var(--accent-color);
+  flex-shrink: 0;
+}
+
+.macro-toggle-label {
+  color: var(--text-color);
+}
+
+.macro-badge {
+  background: var(--accent-color);
+  color: #fff;
+  font-size: 0.65rem;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 10px;
+  letter-spacing: 0.3px;
+}
+
+/* Toggle Switch */
+.toggle-switch {
+  position: relative;
+  display: inline-block;
+  width: 38px;
+  height: 21px;
+  flex-shrink: 0;
+}
+
+.toggle-switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.toggle-slider {
+  position: absolute;
+  inset: 0;
+  background: rgba(255,255,255,0.12);
+  border-radius: 21px;
+  cursor: pointer;
+  transition: background 0.25s;
+}
+
+.toggle-slider::before {
+  content: '';
+  position: absolute;
+  left: 3px;
+  top: 3px;
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  transition: transform 0.25s, background 0.25s;
+}
+
+.toggle-switch input:checked + .toggle-slider {
+  background: rgba(154, 140, 152, 0.4);
+}
+
+.toggle-switch input:checked + .toggle-slider::before {
+  transform: translateX(17px);
+  background: var(--accent-color);
+}
+
+/* ── Macro Panel ─────────────────────────────────────── */
+.macro-panel {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 0.28s ease;
+}
+
+.macro-panel.open {
+  grid-template-rows: 1fr;
+}
+
+.macro-panel-inner {
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: var(--bg-surface);
+  border-radius: var(--border-radius);
+  border: 1px solid rgba(255,255,255,0.06);
+  /* inner padding applied via max-height trick */
+  padding: 0 12px;
+  transition: padding 0.28s ease;
+}
+
+.macro-panel.open .macro-panel-inner {
+  padding: 14px 12px;
+}
+
+.macro-stat {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  padding: 6px 8px;
+  background: rgba(0,0,0,0.15);
+  border-radius: 6px;
+}
+
+.macro-stat strong {
+  color: var(--text-color);
+  font-size: 0.9rem;
+}
+
+.macro-controls {
+  display: flex;
+  gap: 8px;
+}
+
+.macro-controls .btn {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 10px;
+  font-size: 0.85rem;
+}
+
+/* Buttons */
+.btn {
+  border: none;
+  border-radius: 6px;
+  padding: 12px 15px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 0.2s, transform 0.1s, opacity 0.2s;
+  color: white;
+  font-family: inherit;
+}
+
+.btn.small {
+  padding: 8px 12px;
+  font-size: 0.8rem;
+}
+
+.btn:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+.btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.btn.primary { background-color: var(--primary-color); }
+.btn.primary:hover:not(:disabled) { background-color: var(--primary-hover); }
+
+.btn.secondary { background-color: var(--bg-surface); border: 1px solid rgba(255,255,255,0.1); }
+.btn.secondary:hover:not(:disabled) { background-color: var(--bg-surface-hover); }
+
+.btn.danger { background-color: var(--danger-color); }
+.btn.danger:hover:not(:disabled) { background-color: var(--danger-hover); }
+
+.btn.success { background-color: var(--success-color); }
+.btn.success:hover:not(:disabled) { background-color: var(--success-hover); }
+
+/* Save/Load Group */
+.save-load-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: rgba(0,0,0,0.12);
+  padding: 10px;
+  border-radius: 6px;
+  border: 1px solid rgba(255,255,255,0.04);
+}
+
+.save-load-group h4 {
+  margin: 0;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.save-row, .load-row {
+  display: flex;
+  gap: 6px;
+}
+
+.save-row input, .load-row select {
+  flex: 1;
+  min-width: 0;
+}
+
 /* Main Action */
 .main-action-container {
-  margin-top: 5px;
+  margin-top: 2px;
   border-top: 1px solid rgba(255, 255, 255, 0.08);
-  padding-top: 15px;
+  padding-top: 12px;
 }
 
 #btnPlay {
@@ -298,6 +393,14 @@ select {
   font-size: 1.05rem;
   letter-spacing: 0.5px;
   box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.btn-icon {
+  flex-shrink: 0;
 }
 
 @keyframes pulse {
