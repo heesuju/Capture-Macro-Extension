@@ -86,38 +86,36 @@
           Capture first, then run macro
         </label>
 
-        <!-- Action count -->
-        <div class="macro-stat">
-          <span>Actions recorded:</span>
-          <strong id="actionCount">0</strong>
+        <!-- Recordings select + delete -->
+        <div class="recordings-row">
+          <select id="savedRecordingsSelect">
+            <option value="">＋ New Recording</option>
+          </select>
+          <button id="btnDelete" class="btn danger icon-btn" title="Delete recording" style="display:none;">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+              <polyline points="3 6 5 6 21 6"/>
+              <path d="M19 6l-1 14H6L5 6"/>
+              <path d="M10 11v6M14 11v6"/>
+            </svg>
+          </button>
         </div>
 
-        <!-- Record / Clear -->
-        <div class="macro-controls">
-          <button id="btnRecord" class="btn primary">
+        <!-- Record section: shown when New is selected -->
+        <div id="recordSection">
+          <div class="macro-stat">
+            <span>Actions recorded</span>
+            <strong id="actionCount">0</strong>
+          </div>
+          <button id="btnRecord" class="btn primary record-btn">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="8"/></svg>
             Record
           </button>
-          <button id="btnClear" class="btn danger">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/></svg>
-            Clear
-          </button>
         </div>
 
-        <!-- Save / Load -->
-        <div class="save-load-group">
-          <h4>Saved Recordings</h4>
-          <div class="save-row">
-            <input type="text" id="saveNameInput" placeholder="Recording name">
-            <button id="btnSave" class="btn primary small">Save</button>
-          </div>
-          <div class="load-row">
-            <select id="savedRecordingsSelect">
-              <option value="">Select a recording...</option>
-            </select>
-            <button id="btnLoad" class="btn secondary small">Load</button>
-            <button id="btnDelete" class="btn danger small">Del</button>
-          </div>
+        <!-- Save row: shown after stopping a new recording -->
+        <div id="saveSection" class="save-row" style="display:none;">
+          <input type="text" id="saveNameInput" placeholder="Recording name">
+          <button id="btnSave" class="btn success small">Save</button>
         </div>
 
       </div>
