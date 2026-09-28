@@ -21,8 +21,11 @@ document.addEventListener('DOMContentLoaded', () => {
   const createPdfCheckbox    = document.getElementById('createPdfCheckbox');
   const btnSave     = document.getElementById('btnSave');
   const btnDelete   = document.getElementById('btnDelete');
+  const btnRename   = document.getElementById('btnRename');
+  const btnCancelRename = document.getElementById('btnCancelRename');
   const saveNameInput = document.getElementById('saveNameInput');
   const savedRecordingsSelect = document.getElementById('savedRecordingsSelect');
+  const recordingsRow = document.getElementById('recordingsRow');
 
   const macroEnabledToggle = document.getElementById('macroEnabledToggle');
   const macroPanel  = document.getElementById('macroPanel');
@@ -46,6 +49,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   let currentState = {};
+  let isRenaming = false;
 
   // ── Apply Settings ────────────────────────────────────
   function applyLanguage(lang) {
@@ -187,11 +191,20 @@ document.addEventListener('DOMContentLoaded', () => {
     recordSection.style.display = isNew ? 'flex' : 'none';
     btnRecord.style.display = 'none';
 
-    // Delete button only when a saved recording is selected
-    btnDelete.style.display = isNew ? 'none' : 'inline-flex';
+    if (isRenaming) {
+      recordingsRow.style.display = 'none';
+      saveSection.style.display = 'flex';
+      btnCancelRename.style.display = 'inline-flex';
+      return;
+    }
 
-    // Recordings are auto-saved on stop, so the manual save row is unused
+    recordingsRow.style.display = 'flex';
     saveSection.style.display = 'none';
+    btnCancelRename.style.display = 'none';
+
+    // Rename/delete buttons only when a saved recording is selected
+    btnRename.style.display = isNew ? 'none' : 'inline-flex';
+    btnDelete.style.display = isNew ? 'none' : 'inline-flex';
   }
 
   // ── Area buttons ──────────────────────────────────────
@@ -394,15 +407,39 @@ document.addEventListener('DOMContentLoaded', () => {
     chrome.runtime.sendMessage({ command: 'updateCreatePdf', createPdf: createPdfCheckbox.checked });
   });
 
-  btnSave.addEventListener('click', () => {
-    const name = saveNameInput.value.trim();
+  btnRename.addEventListener('click', () => {
+    const name = currentState.activeRecordingName || savedRecordingsSelect.value;
     if (!name) return;
-    chrome.runtime.sendMessage({ command: 'saveRecording', name }, (response) => {
+    isRenaming = true;
+    saveNameInput.value = name;
+    refreshMacroPanelSections();
+    saveNameInput.focus();
+    saveNameInput.select();
+  });
+
+  btnCancelRename.addEventListener('click', () => {
+    isRenaming = false;
+    saveNameInput.value = '';
+    refreshMacroPanelSections();
+  });
+
+  saveNameInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      btnSave.click();
+    } else if (e.key === 'Escape') {
+      btnCancelRename.click();
+    }
+  });
+
+  btnSave.addEventListener('click', () => {
+    const newName = saveNameInput.value.trim();
+    const oldName = currentState.activeRecordingName || savedRecordingsSelect.value;
+    if (!newName || !oldName) return;
+    chrome.runtime.sendMessage({ command: 'renameRecording', oldName, newName }, (response) => {
       if (response) {
+        isRenaming = false;
         saveNameInput.value = '';
         updateUI(response);
-        savedRecordingsSelect.value = name;
-        refreshMacroPanelSections();
       }
     });
   });

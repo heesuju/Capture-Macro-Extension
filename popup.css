@@ -96,6 +96,11 @@ body {
   color: var(--accent-color);
 }
 
+.app-icon {
+  display: block;
+  border-radius: 4px;
+}
+
 .header-icon-btn {
   background: transparent;
   border: 1px solid transparent;
@@ -228,6 +233,26 @@ body.theme-light input[type="text"]:focus, body.theme-light select:focus {
 select {
   appearance: none;
   cursor: pointer;
+}
+
+.select-wrapper {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+}
+
+.select-wrapper select {
+  width: 100%;
+  padding-right: 30px;
+}
+
+.select-chevron {
+  position: absolute;
+  right: 10px;
+  color: var(--text-muted);
+  pointer-events: none;
 }
 
 /* ── Area Button Group ───────────────────────────────── */
@@ -391,11 +416,6 @@ select {
   display: flex;
   gap: 6px;
   align-items: center;
-}
-
-.recordings-row select {
-  flex: 1;
-  min-width: 0;
 }
 
 .icon-btn {

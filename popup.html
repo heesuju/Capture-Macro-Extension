@@ -12,10 +12,7 @@
     <header class="app-header">
       <div class="app-header-title">
         <span id="headerTitleMain" class="header-title-content">
-          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
-            <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
-            <circle cx="12" cy="13" r="4"/>
-          </svg>
+          <img src="icons/icon_32.png" width="17" height="17" alt="" class="app-icon">
           <span data-i18n="appTitle">CheeseIt</span>
         </span>
         <span id="headerTitleSettings" class="header-title-content" style="display: none;">
@@ -138,11 +135,22 @@
               <span data-i18n="captureFirstLabel">Capture first, then run macro</span>
             </label>
 
-            <!-- Recordings select + delete -->
-            <div class="recordings-row">
-              <select id="savedRecordingsSelect">
-                <option value="">＋ New Recording</option>
-              </select>
+            <!-- Recordings select + rename + delete -->
+            <div class="recordings-row" id="recordingsRow">
+              <div class="select-wrapper">
+                <select id="savedRecordingsSelect">
+                  <option value="">＋ New Recording</option>
+                </select>
+                <svg class="select-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                  <polyline points="6 9 12 15 18 9"/>
+                </svg>
+              </div>
+              <button id="btnRename" class="btn secondary icon-btn" title="Rename recording" data-i18n-title="renameRecordingTitle" style="display:none;">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M12 20h9"/>
+                  <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z"/>
+                </svg>
+              </button>
               <button id="btnDelete" class="btn danger icon-btn" title="Delete recording" data-i18n-title="deleteRecordingTitle" style="display:none;">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
                   <polyline points="3 6 5 6 21 6"/>
@@ -164,10 +172,16 @@
               </button>
             </div>
 
-            <!-- Save row: shown after stopping a new recording -->
+            <!-- Save/rename row: shown after stopping a new recording, or when renaming -->
             <div id="saveSection" class="save-row" style="display:none;">
               <input type="text" id="saveNameInput" placeholder="Recording name" data-i18n-placeholder="saveNamePlaceholder">
               <button id="btnSave" class="btn success small" data-i18n="saveBtn">Save</button>
+              <button id="btnCancelRename" class="btn secondary icon-btn" title="Cancel" data-i18n-title="cancelBtn" style="display:none;">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                  <line x1="18" y1="6" x2="6" y2="18"/>
+                  <line x1="6" y1="6" x2="18" y2="18"/>
+                </svg>
+              </button>
             </div>
 
           </div>

@@ -206,14 +206,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   } else if (message.command === 'updateMacroEnabled') {
     state.macroEnabled = message.macroEnabled;
     sendResponse(state);
-  } else if (message.command === 'saveRecording') {
-    if (message.name && state.actions.length > 0) {
-      state.savedRecordings[message.name] = state.actions;
-      state.activeRecordingName = message.name;
-      chrome.storage.local.set({savedRecordings: state.savedRecordings});
-      broadcastState();
-    }
-    sendResponse(state);
   } else if (message.command === 'loadRecording') {
     if (message.name && state.savedRecordings[message.name]) {
       state.actions = state.savedRecordings[message.name];
@@ -226,6 +218,21 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       delete state.savedRecordings[message.name];
       if (state.activeRecordingName === message.name) {
         state.activeRecordingName = '';
+      }
+      chrome.storage.local.set({savedRecordings: state.savedRecordings});
+      broadcastState();
+    }
+    sendResponse(state);
+  } else if (message.command === 'renameRecording') {
+    const oldName = message.oldName;
+    const newName = message.newName && message.newName.trim();
+    const oldExists = oldName && state.savedRecordings[oldName];
+    const newIsFree = newName && (newName === oldName || !state.savedRecordings[newName]);
+    if (oldExists && newIsFree && newName !== oldName) {
+      state.savedRecordings[newName] = state.savedRecordings[oldName];
+      delete state.savedRecordings[oldName];
+      if (state.activeRecordingName === oldName) {
+        state.activeRecordingName = newName;
       }
       chrome.storage.local.set({savedRecordings: state.savedRecordings});
       broadcastState();
