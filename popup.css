@@ -194,21 +194,6 @@ body {
   color: var(--text-color);
 }
 
-.checkbox-label {
-  display: flex;
-  align-items: center;
-  font-size: 0.84rem;
-  color: var(--text-color);
-  cursor: pointer;
-  gap: 8px;
-  user-select: none;
-}
-
-.checkbox-label input {
-  cursor: pointer;
-  accent-color: var(--primary-color);
-}
-
 input[type="text"], select {
   background: var(--input-bg);
   border: 1px solid var(--border-color);
@@ -575,6 +560,16 @@ select {
 
 .setting-label svg {
   color: var(--accent-color);
+}
+
+.setting-group.toggle-row {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.setting-group.toggle-row .setting-label {
+  cursor: pointer;
 }
 
 /* Segmented Control */
