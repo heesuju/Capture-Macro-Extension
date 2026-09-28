@@ -48,10 +48,12 @@ async function getNextRunSubfolder() {
 function updateBadge() {
   if (state.isRecording) {
     chrome.action.setBadgeBackgroundColor({ color: '#e94560' });
-    chrome.action.setBadgeText({ text: state.actions.length > 0 ? String(state.actions.length) : '•' });
+    // No glyph while idle-recording — a bare space renders as a plain red dot,
+    // avoiding off-center symbol glyphs. Digits center fine once actions exist.
+    chrome.action.setBadgeText({ text: state.actions.length > 0 ? String(state.actions.length) : ' ' });
   } else if (state.isPlaying) {
     chrome.action.setBadgeBackgroundColor({ color: '#4caf50' });
-    chrome.action.setBadgeText({ text: '▶' });
+    chrome.action.setBadgeText({ text: ' ' });
   } else {
     chrome.action.setBadgeText({ text: '' });
   }
