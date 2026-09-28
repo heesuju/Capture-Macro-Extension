@@ -25,10 +25,6 @@
       <div class="input-group">
         <label>Filename Prefix</label>
         <input type="text" id="prefixInput" placeholder="e.g., my_capture" />
-        <label class="checkbox-label">
-          <input type="checkbox" id="captureFirstCheckbox">
-          Capture first, then action
-        </label>
       </div>
 
       <div class="controls">
@@ -44,6 +40,10 @@
       </div>
 
       <div class="controls">
+        <label class="checkbox-label" style="margin-top: 0; justify-content: center; margin-bottom: 5px;">
+          <input type="checkbox" id="captureFirstCheckbox">
+          Capture first, then action
+        </label>
         <button id="btnRecord" class="btn primary">Start Recording</button>
         <button id="btnClear" class="btn danger">Clear Macro</button>
       </div>
