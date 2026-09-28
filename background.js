@@ -114,8 +114,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
     sendResponse({success: true});
   } else if (message.command === 'startPlayback') {
-    if (!state.isPlaying && state.actions.length > 0) {
-      startPlayback(message.prefix);
+    if (!state.isPlaying) {
+      if (state.actions.length === 0) {
+        takeSingleCapture(message.prefix);
+      } else {
+        startPlayback(message.prefix);
+      }
     }
     sendResponse(state);
   } else if (message.command === 'stopPlayback') {
@@ -217,6 +221,31 @@ async function cropImage(dataUrl, rect) {
   return new Promise((resolve) => {
     reader.onloadend = () => resolve(reader.result);
   });
+}
+
+async function takeSingleCapture(prefix) {
+  state.isPlaying = true;
+  broadcastState();
+
+  if (prefix && prefix.length > 0) {
+    sessionPrefix = prefix;
+    state.prefix = prefix;
+  } else {
+    const now = new Date();
+    const yy = String(now.getFullYear()).slice(-2);
+    const mm = String(now.getMonth() + 1).padStart(2, '0');
+    const dd = String(now.getDate()).padStart(2, '0');
+    sessionPrefix = `${yy}${mm}${dd}`;
+    state.prefix = '';
+  }
+
+  const tabs = await chrome.tabs.query({active: true, lastFocusedWindow: true});
+  if (tabs.length > 0) {
+    captureCount = 0;
+    await captureScreenshot(tabs, tabs[0].id, sessionPrefix);
+  }
+
+  endPlayback();
 }
 
 async function startPlayback(prefix) {

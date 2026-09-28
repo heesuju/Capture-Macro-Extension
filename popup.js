@@ -14,6 +14,20 @@ document.addEventListener('DOMContentLoaded', () => {
   const btnDelete = document.getElementById('btnDelete');
   const saveNameInput = document.getElementById('saveNameInput');
   const savedRecordingsSelect = document.getElementById('savedRecordingsSelect');
+  
+  // Tab logic
+  const tabBtns = document.querySelectorAll('.tab-btn');
+  const tabContents = document.querySelectorAll('.tab-content');
+
+  tabBtns.forEach(btn => {
+    btn.addEventListener('click', () => {
+      tabBtns.forEach(b => b.classList.remove('active'));
+      tabContents.forEach(c => c.classList.remove('active'));
+      
+      btn.classList.add('active');
+      document.getElementById(btn.dataset.target).classList.add('active');
+    });
+  });
 
   function updateUI(state) {
     actionCount.textContent = state.actions.length;
@@ -32,7 +46,7 @@ document.addEventListener('DOMContentLoaded', () => {
       for (const name of Object.keys(state.savedRecordings)) {
         const option = document.createElement('option');
         option.value = name;
-        option.textContent = `${name} (${state.savedRecordings[name].length} actions)`;
+        option.textContent = `${name} (${state.savedRecordings[name].length} acts)`;
         if (name === currentVal) option.selected = true;
         savedRecordingsSelect.appendChild(option);
       }
@@ -47,39 +61,46 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     
     if (state.isSelectingArea) {
-      statusDisplay.textContent = 'Status: Draw Rectangle...';
+      statusDisplay.textContent = 'Draw Rectangle...';
       statusDisplay.className = 'status recording';
+      statusDisplay.classList.remove('hidden');
+      
       btnRecord.disabled = true;
       btnPlay.disabled = true;
       btnClear.disabled = true;
       btnSetArea.disabled = true;
       btnClearArea.disabled = true;
     } else if (state.isRecording) {
-      statusDisplay.textContent = 'Status: Recording...';
+      statusDisplay.textContent = 'Recording...';
       statusDisplay.className = 'status recording';
+      statusDisplay.classList.remove('hidden');
+      
       btnRecord.textContent = 'Stop Recording';
       btnRecord.className = 'btn danger';
       btnRecord.disabled = false;
       btnPlay.disabled = true;
       btnClear.disabled = true;
     } else if (state.isPlaying) {
-      statusDisplay.textContent = 'Status: Playing...';
+      statusDisplay.textContent = 'Playing...';
       statusDisplay.className = 'status playing';
+      statusDisplay.classList.remove('hidden');
+      
       btnRecord.disabled = true;
       btnClear.disabled = true;
-      btnPlay.textContent = 'Stop Macro';
+      btnPlay.innerHTML = '<svg class="btn-icon" width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h12v12H6z"/></svg> Stop';
       btnPlay.className = 'btn danger';
       btnPlay.disabled = false;
     } else {
-      statusDisplay.textContent = 'Status: Ready';
-      statusDisplay.className = 'status';
+      // Idle state
+      statusDisplay.className = 'status hidden';
+      
       btnRecord.textContent = 'Start Recording';
       btnRecord.className = 'btn primary';
       btnRecord.disabled = false;
       btnClear.disabled = false;
-      btnPlay.textContent = 'Play Macro';
+      btnPlay.innerHTML = '<svg class="btn-icon" width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg> Run';
       btnPlay.className = 'btn success';
-      btnPlay.disabled = state.actions.length === 0;
+      btnPlay.disabled = false;
       btnSetArea.disabled = false;
       btnClearArea.disabled = !state.captureRect;
     }
@@ -98,7 +119,7 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   btnPlay.addEventListener('click', () => {
-    if (btnPlay.textContent === 'Stop Macro') {
+    if (btnPlay.textContent.includes('Stop')) {
       chrome.runtime.sendMessage({ command: 'stopPlayback' }, (response) => {
         if (response) updateUI(response);
       });
@@ -167,7 +188,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  // Listen for updates from background (like action recorded or playback ended)
+  // Listen for updates from background
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message.type === 'STATE_UPDATE') {
       updateUI(message.state);

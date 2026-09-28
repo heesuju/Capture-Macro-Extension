@@ -8,43 +8,69 @@
 <body>
   <div class="container">
     <h2>Auto Capture</h2>
-    <div id="status" class="status">Status: Ready</div>
     
-    <div class="stats">
-      <span>Actions Recorded: <strong id="actionCount">0</strong></span><br>
-      <span>Capture Area: <strong id="areaStatus">Full Page</strong></span>
+    <div id="status" class="status hidden"></div>
+    
+    <div class="tabs">
+      <button class="tab-btn active" data-target="tab-capture">Capture</button>
+      <button class="tab-btn" data-target="tab-macro">Macro</button>
     </div>
 
-    <div class="input-group">
-      <input type="text" id="prefixInput" placeholder="Filename prefix (e.g., my_capture)" />
-      <label class="checkbox-label" style="display:flex; align-items:center; margin-top:5px; font-size:14px;">
-        <input type="checkbox" id="captureFirstCheckbox" style="margin-right:5px;">
-        Capture first, then action
-      </label>
-    </div>
-
-    <div class="save-load-group" style="margin-bottom: 15px; padding: 10px; background: #f5f5f5; border-radius: 5px; border: 1px solid #ddd;">
-      <h4 style="margin-top:0; margin-bottom:10px; font-size:14px; color:#333;">Saved Recordings</h4>
-      <div style="display:flex; gap:5px; margin-bottom:10px;">
-        <input type="text" id="saveNameInput" placeholder="Recording name" style="flex:1; padding:5px; border:1px solid #ccc; border-radius:3px;">
-        <button id="btnSave" class="btn primary" style="padding: 5px 10px; font-size:12px;">Save</button>
+    <!-- Capture Tab -->
+    <div id="tab-capture" class="tab-content active">
+      <div class="stats">
+        <span>Capture Area: <strong id="areaStatus">Full Page</strong></span>
       </div>
-      <div style="display:flex; gap:5px;">
-        <select id="savedRecordingsSelect" style="flex:1; padding:5px; border:1px solid #ccc; border-radius:3px;">
-          <option value="">Select a recording...</option>
-        </select>
-        <button id="btnLoad" class="btn secondary" style="padding: 5px 10px; font-size:12px;">Load</button>
-        <button id="btnDelete" class="btn danger" style="padding: 5px 10px; font-size:12px;">Delete</button>
+      
+      <div class="input-group">
+        <label>Filename Prefix</label>
+        <input type="text" id="prefixInput" placeholder="e.g., my_capture" />
+        <label class="checkbox-label">
+          <input type="checkbox" id="captureFirstCheckbox">
+          Capture first, then action
+        </label>
+      </div>
+
+      <div class="controls">
+        <button id="btnSetArea" class="btn secondary">Set Capture Area</button>
+        <button id="btnClearArea" class="btn danger" style="display: none;">Clear Area</button>
       </div>
     </div>
 
-    <div class="controls">
-      <button id="btnSetArea" class="btn secondary">Set Capture Area</button>
-      <button id="btnRecord" class="btn primary">Start Recording</button>
-      <button id="btnPlay" class="btn success" disabled>Play Macro</button>
-      <button id="btnClear" class="btn danger">Clear Macro</button>
-      <button id="btnClearArea" class="btn danger" style="display: none;">Clear Area</button>
+    <!-- Macro Tab -->
+    <div id="tab-macro" class="tab-content">
+      <div class="stats">
+        <span>Actions Recorded: <strong id="actionCount">0</strong></span>
+      </div>
+
+      <div class="controls">
+        <button id="btnRecord" class="btn primary">Start Recording</button>
+        <button id="btnClear" class="btn danger">Clear Macro</button>
+      </div>
+
+      <div class="save-load-group">
+        <h4>Saved Recordings</h4>
+        <div class="save-row">
+          <input type="text" id="saveNameInput" placeholder="Recording name">
+          <button id="btnSave" class="btn primary small">Save</button>
+        </div>
+        <div class="load-row">
+          <select id="savedRecordingsSelect">
+            <option value="">Select a recording...</option>
+          </select>
+          <button id="btnLoad" class="btn secondary small">Load</button>
+          <button id="btnDelete" class="btn danger small">Delete</button>
+        </div>
+      </div>
     </div>
+
+    <!-- Persistent Play Button -->
+    <div class="main-action-container">
+      <button id="btnPlay" class="btn success" disabled>
+        <svg class="btn-icon" width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg> Run
+      </button>
+    </div>
+
   </div>
   <script src="popup.js"></script>
 </body>
