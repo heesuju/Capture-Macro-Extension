@@ -32,7 +32,10 @@ const I18N = {
     statusPlaying: 'Playing...',
     areaRatioFull: 'Full',
     areaRatioFree: 'Free',
-    createPdfLabel: 'Create PDF after capture'
+    createPdfLabel: 'Create PDF after capture',
+    captureModeLabel: 'Capture Mode',
+    modeSingle: 'Standard',
+    modeZoomGrid: 'Zoom Grid'
   },
   ko: {
     appTitle: 'CheeseIt',
@@ -66,6 +69,9 @@ const I18N = {
     statusPlaying: '실행 중...',
     areaRatioFull: '전체',
     areaRatioFree: '자유',
-    createPdfLabel: '캡처 후 PDF 생성'
+    createPdfLabel: '캡처 후 PDF 생성',
+    captureModeLabel: '캡처 모드',
+    modeSingle: '표준',
+    modeZoomGrid: '줌 그리드'
   }
 };

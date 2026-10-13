@@ -11,8 +11,13 @@ let state = {
   macroEnabled: false,
   savedRecordings: {},
   activeRecordingName: '',
-  createPdf: true
+  createPdf: true,
+  captureMode: 'single', // 'single' | 'zoom_grid'
+  zoomMultiplier: 2       // 2 | 3 | 4 -- quality multiplier for zoom_grid mode
 };
+
+const MAX_CANVAS_DIM = 16000; // stay under the ~16384/32768px canvas ceiling in both browsers
+const ZOOM_SETTLE_DELAY = 300; // ms to let layout/zoom settle before each grid tile capture
 
 chrome.storage.local.get(['savedRecordings'], (result) => {
   if (result.savedRecordings) {
@@ -203,6 +208,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   } else if (message.command === 'updateCreatePdf') {
     state.createPdf = message.createPdf;
     sendResponse(state);
+  } else if (message.command === 'updateCaptureMode') {
+    state.captureMode = message.captureMode;
+    broadcastState();
+    sendResponse(state);
+  } else if (message.command === 'updateZoomMultiplier') {
+    state.zoomMultiplier = message.zoomMultiplier;
+    broadcastState();
+    sendResponse(state);
   } else if (message.command === 'updateMacroEnabled') {
     state.macroEnabled = message.macroEnabled;
     sendResponse(state);
@@ -242,6 +255,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   return true;
 });
 
+async function performCapture(tabs, tabId, prefix) {
+  if (state.captureMode === 'zoom_grid') {
+    await captureZoomGrid(tabs, tabId, prefix);
+  } else {
+    await captureScreenshot(tabs, tabId, prefix);
+  }
+}
+
 async function captureScreenshot(tabs, tabId, prefix) {
   // Hide rectangle before capturing
   if (state.captureRect) {
@@ -250,27 +271,233 @@ async function captureScreenshot(tabs, tabId, prefix) {
   }
 
   let dataUrl = await chrome.tabs.captureVisibleTab(tabs[0].windowId, {format: 'png'});
-  
+
   // Show rectangle again
   if (state.captureRect) {
     await chrome.tabs.sendMessage(tabId, { command: 'showRect' }).catch(() => {});
-  }
-
-  if (state.captureRect) {
     dataUrl = await cropImage(dataUrl, state.captureRect);
   }
-  
+
+  await saveCapture(dataUrl, prefix);
+}
+
+// ── Zoom Grid Capture ──────────────────────────────────────────────────
+// Boosts effective devicePixelRatio via chrome.tabs.setZoom, and compensates
+// by growing the physical window by the same factor so the CSS layout
+// viewport (and therefore responsive breakpoints) stays unchanged.
+async function enterZoomGridMode(windowId, tabId, multiplier, screenInfo) {
+  const win = await chrome.windows.get(windowId);
+  const original = { width: win.width, height: win.height, left: win.left, top: win.top };
+
+  // chrome.windows.update REJECTS bounds that would leave more than half the
+  // window off-screen -- it does not silently clamp. Clamp to the actual
+  // available screen space ourselves and anchor the window inside it.
+  const maxWidth = screenInfo ? screenInfo.availWidth : original.width;
+  const maxHeight = screenInfo ? screenInfo.availHeight : original.height;
+  const targetLeft = screenInfo ? screenInfo.availLeft : original.left;
+  const targetTop = screenInfo ? screenInfo.availTop : original.top;
+
+  const targetWidth = Math.min(Math.round(original.width * multiplier), maxWidth);
+  const targetHeight = Math.min(Math.round(original.height * multiplier), maxHeight);
+
+  let updated;
+  try {
+    updated = await chrome.windows.update(windowId, {
+      left: targetLeft,
+      top: targetTop,
+      width: targetWidth,
+      height: targetHeight
+    });
+  } catch (err) {
+    // Last-resort fallback: proceed without resizing/zooming rather than aborting.
+    console.error('CheeseIt: zoom grid window resize failed, continuing at native resolution:', err);
+    return { original, effectiveMultiplier: 1 };
+  }
+
+  const widthRatio = updated.width / original.width;
+  const heightRatio = updated.height / original.height;
+  const effectiveMultiplier = Math.max(1, Math.min(multiplier, widthRatio, heightRatio));
+
+  await chrome.tabs.setZoom(tabId, effectiveMultiplier);
+
+  return { original, effectiveMultiplier };
+}
+
+async function exitZoomGridMode(windowId, tabId, original) {
+  await chrome.tabs.setZoom(tabId, 0).catch(() => {}); // 0 = reset to the tab's default zoom
+  await chrome.windows.update(windowId, {
+    width: original.width,
+    height: original.height,
+    left: original.left,
+    top: original.top
+  }).catch(() => {});
+}
+
+async function captureZoomGrid(tabs, tabId, prefix) {
+  const windowId = tabs[0].windowId;
+  const requestedMultiplier = state.zoomMultiplier || 2;
+
+  // content.js is only injected on record/select-area, not declaratively --
+  // make sure it's present before relying on it for grid metrics/scrolling.
+  await chrome.scripting.executeScript({ target: { tabId }, files: ['content.js'] }).catch(() => {});
+
+  const before = await chrome.tabs.sendMessage(tabId, { command: 'getLayoutFingerprint' }).catch(() => null);
+  const screenInfo = await chrome.tabs.sendMessage(tabId, { command: 'getScreenInfo' }).catch(() => null);
+  const { original } = await enterZoomGridMode(windowId, tabId, requestedMultiplier, screenInfo);
+
+  try {
+    await sleep(ZOOM_SETTLE_DELAY);
+
+    if (before) {
+      const after = await chrome.tabs.sendMessage(tabId, { command: 'getLayoutFingerprint' }).catch(() => null);
+      if (after && (after.innerWidth !== before.innerWidth || after.innerHeight !== before.innerHeight)) {
+        throw new Error('Zoom Grid capture aborted: page layout changed at this quality level (window could not grow enough to compensate). Try a lower multiplier.');
+      }
+    }
+
+    if (state.captureRect) {
+      await captureZoomGridSelection(tabs, tabId, prefix);
+    } else {
+      await captureZoomGridFullPage(tabs, tabId, prefix);
+    }
+  } finally {
+    await exitZoomGridMode(windowId, tabId, original);
+  }
+}
+
+// captureRect is drawn within a single viewport, so no scrolling/tiling is
+// needed -- just take one supersampled shot and crop it at the boosted scale.
+async function captureZoomGridSelection(tabs, tabId, prefix) {
+  await chrome.tabs.sendMessage(tabId, { command: 'hideRect' }).catch(() => {});
+  await sleep(100);
+
+  const dataUrl = await chrome.tabs.captureVisibleTab(tabs[0].windowId, { format: 'png' });
+
+  await chrome.tabs.sendMessage(tabId, { command: 'showRect' }).catch(() => {});
+
+  const metrics = await chrome.tabs.sendMessage(tabId, { command: 'getZoomGridMetrics' });
+  const croppedDataUrl = await cropImage(dataUrl, state.captureRect, metrics.devicePixelRatio);
+
+  await saveCapture(croppedDataUrl, prefix);
+}
+
+// Full page: tile a 2D grid of boosted-zoom captures with zero overlap, then
+// stitch rows (and rows-into-one-image) via OffscreenCanvas, falling back to
+// separate files whenever the stitched size would exceed canvas limits.
+async function captureZoomGridFullPage(tabs, tabId, prefix) {
+  const windowId = tabs[0].windowId;
+  const metrics = await chrome.tabs.sendMessage(tabId, { command: 'getZoomGridMetrics' });
+  const dpr = metrics.devicePixelRatio;
+  const tileWcss = metrics.viewportWidth;
+  const tileHcss = metrics.viewportHeight;
+  const totalWcss = metrics.pageWidth;
+  const totalHcss = metrics.pageHeight;
+
+  const cols = Math.max(1, Math.ceil(totalWcss / tileWcss));
+  const rows = Math.max(1, Math.ceil(totalHcss / tileHcss));
+
+  const rowStrips = [];
+  let anyRowFellBack = false;
+
+  try {
+    for (let r = 0; r < rows; r++) {
+      const yCss = r * tileHcss;
+      const remHcss = totalHcss - yCss;
+      const cropTopPx = remHcss < tileHcss ? Math.round((tileHcss - remHcss) * dpr) : 0;
+
+      const tileBitmaps = [];
+
+      for (let c = 0; c < cols; c++) {
+        const xCss = c * tileWcss;
+        const remWcss = totalWcss - xCss;
+        const cropLeftPx = remWcss < tileWcss ? Math.round((tileWcss - remWcss) * dpr) : 0;
+
+        await chrome.tabs.sendMessage(tabId, { command: 'scrollToGridPosition', x: xCss, y: yCss });
+        if (r > 0 || c > 0) {
+          await chrome.tabs.sendMessage(tabId, { command: 'suppressStickyElements', enable: true }).catch(() => {});
+        }
+        await sleep(ZOOM_SETTLE_DELAY);
+
+        const dataUrl = await chrome.tabs.captureVisibleTab(windowId, { format: 'png' });
+        let bitmap = await dataUrlToBitmap(dataUrl);
+
+        if (cropLeftPx > 0 || cropTopPx > 0) {
+          bitmap = await cropBitmap(bitmap, cropLeftPx, cropTopPx);
+        }
+        tileBitmaps.push(bitmap);
+      }
+
+      const rowWidthPx = tileBitmaps.reduce((sum, b) => sum + b.width, 0);
+      const rowHeightPx = tileBitmaps[0].height;
+
+      if (rowWidthPx > MAX_CANVAS_DIM) {
+        anyRowFellBack = true;
+        for (let c = 0; c < tileBitmaps.length; c++) {
+          const tileDataUrl = await bitmapToDataUrl(tileBitmaps[c]);
+          await downloadNumbered(tileDataUrl, prefix, `_r${r + 1}c${c + 1}`);
+        }
+        rowStrips.push(null);
+        continue;
+      }
+
+      const rowCanvas = new OffscreenCanvas(rowWidthPx, rowHeightPx);
+      const rowCtx = rowCanvas.getContext('2d');
+      let xOffset = 0;
+      for (const bitmap of tileBitmaps) {
+        rowCtx.drawImage(bitmap, xOffset, 0);
+        xOffset += bitmap.width;
+      }
+      rowStrips.push({ bitmap: await createImageBitmap(rowCanvas), width: rowWidthPx, height: rowHeightPx });
+    }
+  } finally {
+    await chrome.tabs.sendMessage(tabId, { command: 'suppressStickyElements', enable: false }).catch(() => {});
+    await chrome.tabs.sendMessage(tabId, { command: 'scrollToGridPosition', x: 0, y: 0 }).catch(() => {});
+  }
+
+  if (anyRowFellBack) return; // tiles for oversized rows already saved individually above
+
+  const totalHeightPx = rowStrips.reduce((sum, row) => sum + row.height, 0);
+
+  if (totalHeightPx > MAX_CANVAS_DIM) {
+    for (let i = 0; i < rowStrips.length; i++) {
+      const rowDataUrl = await bitmapToDataUrl(rowStrips[i].bitmap);
+      await downloadNumbered(rowDataUrl, prefix, `_row${i + 1}`);
+    }
+    return;
+  }
+
+  const finalCanvas = new OffscreenCanvas(rowStrips[0].width, totalHeightPx);
+  const finalCtx = finalCanvas.getContext('2d');
+  let yOffset = 0;
+  for (const row of rowStrips) {
+    finalCtx.drawImage(row.bitmap, 0, yOffset);
+    yOffset += row.height;
+  }
+
+  const finalBlob = await finalCanvas.convertToBlob({ type: 'image/png' });
+  const finalDataUrl = await blobToDataUrl(finalBlob);
+
+  await saveCapture(finalDataUrl, prefix);
+}
+
+async function downloadNumbered(dataUrl, prefix, suffix) {
+  captureCount++;
+  const filename = `${prefix}_${captureCount.toString().padStart(3, '0')}${suffix}.png`;
+  const filePath = currentSubfolder ? `${currentSubfolder}/${filename}` : filename;
+  await chrome.downloads.download({ url: dataUrl, filename: filePath, saveAs: false });
+}
+
+async function saveCapture(dataUrl, prefix) {
   captureCount++;
   const filename = `${prefix}_${captureCount.toString().padStart(3, '0')}.png`;
   const filePath = currentSubfolder ? `${currentSubfolder}/${filename}` : filename;
-  
+
   await chrome.downloads.download({
     url: dataUrl,
     filename: filePath,
     saveAs: false
   });
 
-  // Collect for PDF if enabled
   if (state.createPdf) {
     const dims = await getImageDimensions(dataUrl);
     sessionCaptures.push({ dataUrl, width: dims.width, height: dims.height });
@@ -281,32 +508,56 @@ async function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-async function cropImage(dataUrl, rect) {
+async function dataUrlToBitmap(dataUrl) {
   const response = await fetch(dataUrl);
   const blob = await response.blob();
-  const bitmap = await createImageBitmap(blob);
-  
-  const dpr = rect.devicePixelRatio || 1;
+  return await createImageBitmap(blob);
+}
+
+async function blobToDataUrl(blob) {
+  const reader = new FileReader();
+  reader.readAsDataURL(blob);
+  return new Promise((resolve) => {
+    reader.onloadend = () => resolve(reader.result);
+  });
+}
+
+async function bitmapToDataUrl(bitmap) {
+  const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(bitmap, 0, 0);
+  const blob = await canvas.convertToBlob({ type: 'image/png' });
+  return await blobToDataUrl(blob);
+}
+
+async function cropBitmap(bitmap, cropLeftPx, cropTopPx) {
+  const w = bitmap.width - cropLeftPx;
+  const h = bitmap.height - cropTopPx;
+  const canvas = new OffscreenCanvas(w, h);
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(bitmap, cropLeftPx, cropTopPx, w, h, 0, 0, w, h);
+  return await createImageBitmap(canvas);
+}
+
+async function cropImage(dataUrl, rect, dprOverride) {
+  const bitmap = await dataUrlToBitmap(dataUrl);
+
+  const dpr = dprOverride || rect.devicePixelRatio || 1;
   const targetX = Math.round(rect.x * dpr);
   const targetY = Math.round(rect.y * dpr);
   const targetWidth = Math.round(rect.width * dpr);
   const targetHeight = Math.round(rect.height * dpr);
-  
+
   const canvas = new OffscreenCanvas(targetWidth, targetHeight);
   const ctx = canvas.getContext('2d');
-  
-  ctx.drawImage(bitmap, 
+
+  ctx.drawImage(bitmap,
     targetX, targetY, targetWidth, targetHeight,
     0, 0, targetWidth, targetHeight
   );
-  
+
   const croppedBlob = await canvas.convertToBlob({ type: 'image/png' });
-  const reader = new FileReader();
-  reader.readAsDataURL(croppedBlob);
-  
-  return new Promise((resolve) => {
-    reader.onloadend = () => resolve(reader.result);
-  });
+  return await blobToDataUrl(croppedBlob);
 }
 
 async function takeSingleCapture(prefix) {
@@ -331,7 +582,11 @@ async function takeSingleCapture(prefix) {
   const tabs = await chrome.tabs.query({active: true, lastFocusedWindow: true});
   if (tabs.length > 0) {
     captureCount = 0;
-    await captureScreenshot(tabs, tabs[0].id, sessionPrefix);
+    try {
+      await performCapture(tabs, tabs[0].id, sessionPrefix);
+    } catch (err) {
+      console.error('CheeseIt: capture failed:', err);
+    }
   }
 
   await endPlayback();
@@ -379,7 +634,11 @@ async function startPlayback(prefix) {
   while (state.isPlaying) {
     // Capture BEFORE all actions
     if (state.captureFirst) {
-      await captureScreenshot(tabs, tabId, sessionPrefix);
+      try {
+        await performCapture(tabs, tabId, sessionPrefix);
+      } catch (err) {
+        console.error('CheeseIt: capture failed:', err);
+      }
     }
 
     for (let i = 0; i < state.actions.length; i++) {
@@ -416,7 +675,11 @@ async function startPlayback(prefix) {
     if (!state.captureFirst) {
       await sleep(1000);
       if (!state.isPlaying) break;
-      await captureScreenshot(tabs, tabId, sessionPrefix);
+      try {
+        await performCapture(tabs, tabId, sessionPrefix);
+      } catch (err) {
+        console.error('CheeseIt: capture failed:', err);
+      }
     }
 
     if (state.isPlaying) await sleep(500);

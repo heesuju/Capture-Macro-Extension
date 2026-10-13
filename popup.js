@@ -12,13 +12,15 @@ document.addEventListener('DOMContentLoaded', () => {
   const btnRecord   = document.getElementById('btnRecord');
   const btnPlay     = document.getElementById('btnPlay');
   const btnSetArea  = document.getElementById('btnSetArea');
-  const areaBtns    = document.querySelectorAll('.area-btn');
+  const areaBtns    = document.querySelectorAll('#areaRatioGroup .area-btn');
   const statusDisplay = document.getElementById('status');
   const actionCount = document.getElementById('actionCount');
   const areaStatus  = document.getElementById('areaStatus');
   const prefixInput = document.getElementById('prefixInput');
   const captureFirstCheckbox = document.getElementById('captureFirstCheckbox');
   const createPdfCheckbox    = document.getElementById('createPdfCheckbox');
+  const captureModeGroup     = document.getElementById('captureModeGroup');
+  const zoomMultiplierGroup  = document.getElementById('zoomMultiplierGroup');
   const btnSave     = document.getElementById('btnSave');
   const btnDelete   = document.getElementById('btnDelete');
   const btnRename   = document.getElementById('btnRename');
@@ -227,8 +229,27 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   });
 
+  // ── Capture mode ──────────────────────────────────────
+  captureModeGroup.querySelectorAll('.segment-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const mode = btn.dataset.mode;
+      chrome.runtime.sendMessage({ command: 'updateCaptureMode', captureMode: mode }, (response) => {
+        if (response) updateUI(response);
+      });
+    });
+  });
+
+  zoomMultiplierGroup.querySelectorAll('.area-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const multiplier = parseInt(btn.dataset.multiplier, 10);
+      chrome.runtime.sendMessage({ command: 'updateZoomMultiplier', zoomMultiplier: multiplier }, (response) => {
+        if (response) updateUI(response);
+      });
+    });
+  });
+
   btnSetArea.addEventListener('click', () => {
-    const activeBtn = document.querySelector('.area-btn.active');
+    const activeBtn = document.querySelector('#areaRatioGroup .area-btn.active');
     const ratioVal = activeBtn ? activeBtn.dataset.ratio : 'free';
     const ratio = ratioVal === 'free' ? null : parseFloat(ratioVal);
     chrome.runtime.sendMessage({ command: 'startSelectingArea', ratio }, (response) => {
@@ -266,6 +287,18 @@ document.addEventListener('DOMContentLoaded', () => {
     if (document.activeElement !== createPdfCheckbox) {
       createPdfCheckbox.checked = (state.createPdf !== false); // default true
     }
+
+    // Capture mode
+    const captureMode = state.captureMode || 'single';
+    captureModeGroup.querySelectorAll('.segment-btn').forEach((btn) => {
+      btn.classList.toggle('active', btn.dataset.mode === captureMode);
+    });
+    zoomMultiplierGroup.style.display = captureMode === 'zoom_grid' ? 'flex' : 'none';
+
+    const zoomMultiplier = state.zoomMultiplier || 2;
+    zoomMultiplierGroup.querySelectorAll('.area-btn').forEach((btn) => {
+      btn.classList.toggle('active', parseInt(btn.dataset.multiplier, 10) === zoomMultiplier);
+    });
 
     // Macro enabled
     const macroOn = state.macroEnabled || false;

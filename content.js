@@ -1,4 +1,5 @@
-if (!window.__autoCaptureInitialized) {
+(function() {
+  if (window.__autoCaptureInitialized) return;
   window.__autoCaptureInitialized = true;
 
   let isRecording = false;
@@ -41,8 +42,70 @@ if (!window.__autoCaptureInitialized) {
     } else if (message.command === 'showRect') {
       if (captureRectDiv) captureRectDiv.style.display = 'block';
       sendResponse({ success: true });
+    } else if (message.command === 'getLayoutFingerprint') {
+      sendResponse(getLayoutFingerprint());
+    } else if (message.command === 'getZoomGridMetrics') {
+      sendResponse(getZoomGridMetrics());
+    } else if (message.command === 'scrollToGridPosition') {
+      window.scrollTo({ top: message.y, left: message.x, behavior: 'instant' });
+      sendResponse({ success: true });
+    } else if (message.command === 'suppressStickyElements') {
+      suppressStickyElements(message.enable);
+      sendResponse({ success: true });
+    } else if (message.command === 'getScreenInfo') {
+      sendResponse({
+        availLeft: window.screen.availLeft || 0,
+        availTop: window.screen.availTop || 0,
+        availWidth: window.screen.availWidth,
+        availHeight: window.screen.availHeight
+      });
     }
   });
+
+  function getLayoutFingerprint() {
+    const doc = document.documentElement;
+    return {
+      scrollWidth: doc.scrollWidth,
+      scrollHeight: doc.scrollHeight,
+      innerWidth: window.innerWidth,
+      innerHeight: window.innerHeight
+    };
+  }
+
+  function getZoomGridMetrics() {
+    const doc = document.documentElement;
+    return {
+      viewportWidth: window.innerWidth,
+      viewportHeight: window.innerHeight,
+      pageWidth: Math.max(doc.scrollWidth, document.body.scrollWidth),
+      pageHeight: Math.max(doc.scrollHeight, document.body.scrollHeight),
+      devicePixelRatio: window.devicePixelRatio || 1
+    };
+  }
+
+  let suppressedStickyElements = [];
+
+  function suppressStickyElements(enable) {
+    if (enable) {
+      suppressedStickyElements = [];
+      const elements = document.querySelectorAll('*');
+      for (const el of elements) {
+        const pos = window.getComputedStyle(el).position;
+        if (pos === 'fixed' || pos === 'sticky') {
+          const rect = el.getBoundingClientRect();
+          if (rect.top < 120 || rect.left < 120) {
+            suppressedStickyElements.push({ el, origVisibility: el.style.visibility });
+            el.style.visibility = 'hidden';
+          }
+        }
+      }
+    } else {
+      for (const item of suppressedStickyElements) {
+        item.el.style.visibility = item.origVisibility;
+      }
+      suppressedStickyElements = [];
+    }
+  }
 
   document.addEventListener('mousedown', (e) => {
     if (!isRecording) return;
@@ -203,5 +266,5 @@ function startSelection(ratio) {
   overlay.addEventListener('mousemove', onMouseMove);
   overlay.addEventListener('mouseup', onMouseUp);
 }
-}
+})();
 
