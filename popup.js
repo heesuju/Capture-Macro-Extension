@@ -11,7 +11,6 @@ function t(key) {
 document.addEventListener('DOMContentLoaded', () => {
   const btnRecord   = document.getElementById('btnRecord');
   const btnPlay     = document.getElementById('btnPlay');
-  const btnSetArea  = document.getElementById('btnSetArea');
   const areaBtns    = document.querySelectorAll('#areaRatioGroup .area-btn');
   const statusDisplay = document.getElementById('status');
   const actionCount = document.getElementById('actionCount');
@@ -227,8 +226,9 @@ document.addEventListener('DOMContentLoaded', () => {
           if (response) updateUI(response);
         });
       } else {
-        btnSetArea.style.display = 'block';
-        btnSetArea.textContent = t('drawAreaBtn');
+        // Start drawing right away; close the popup so the page can be dragged on
+        const ratio = val === 'free' ? null : parseFloat(val);
+        chrome.runtime.sendMessage({ command: 'startSelectingArea', ratio }, () => window.close());
       }
     });
   });
@@ -249,15 +249,6 @@ document.addEventListener('DOMContentLoaded', () => {
       chrome.runtime.sendMessage({ command: 'updateZoomMultiplier', zoomMultiplier: multiplier }, (response) => {
         if (response) updateUI(response);
       });
-    });
-  });
-
-  btnSetArea.addEventListener('click', () => {
-    const activeBtn = document.querySelector('#areaRatioGroup .area-btn.active');
-    const ratioVal = activeBtn ? activeBtn.dataset.ratio : 'free';
-    const ratio = ratioVal === 'free' ? null : parseFloat(ratioVal);
-    chrome.runtime.sendMessage({ command: 'startSelectingArea', ratio }, (response) => {
-      if (response) updateUI(response);
     });
   });
 
@@ -350,13 +341,9 @@ document.addEventListener('DOMContentLoaded', () => {
       const activeRatio = state.captureRatio ? String(state.captureRatio) : 'free';
       setActiveAreaBtn(activeRatio);
       areaStatus.textContent = `${t('customArea')} (${state.captureRect.width}×${state.captureRect.height})`;
-      btnSetArea.style.display = 'block';
-      btnSetArea.textContent = t('redrawAreaBtn');
     } else {
       setActiveAreaBtn('full');
       areaStatus.textContent = t('fullPage');
-      btnSetArea.style.display = 'none';
-      btnSetArea.textContent = t('drawAreaBtn');
     }
 
     // Global state modes
@@ -366,7 +353,6 @@ document.addEventListener('DOMContentLoaded', () => {
       statusDisplay.classList.remove('hidden');
       btnRecord.disabled = true;
       btnPlay.disabled = true;
-      btnSetArea.disabled = true;
       areaBtns.forEach(b => b.disabled = true);
 
     } else if (state.isRecording) {
@@ -399,7 +385,6 @@ document.addEventListener('DOMContentLoaded', () => {
       btnPlay.innerHTML = `<svg class="btn-icon" width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="8"/></svg> <span class="btn-play-text">${t('recordBtn')}</span>`;
       btnPlay.className = 'btn primary';
       btnPlay.disabled = false;
-      btnSetArea.disabled = false;
       areaBtns.forEach(b => b.disabled = false);
 
     } else {
@@ -409,7 +394,6 @@ document.addEventListener('DOMContentLoaded', () => {
       btnPlay.innerHTML = `<svg class="btn-icon" width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg> <span class="btn-play-text">${t('runBtn')}</span>`;
       btnPlay.className = 'btn success';
       btnPlay.disabled = false;
-      btnSetArea.disabled = false;
       areaBtns.forEach(b => b.disabled = false);
     }
   }

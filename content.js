@@ -301,6 +301,8 @@ function drawPersistentRect(rect) {
   captureRectDiv.style.display = 'block';
 }
 
+const MIN_SELECTION_SIZE = 5; // px; smaller drags count as a click, i.e. cancel
+
 function startSelection(ratio) {
   const overlay = document.createElement('div');
   overlay.style.position = 'fixed';
@@ -357,6 +359,28 @@ function startSelection(ratio) {
     selection.style.height = height + 'px';
   };
 
+  // Removes the overlay and all of its listeners
+  const finish = () => {
+    overlay.remove();
+    overlay.removeEventListener('mousedown', onMouseDown);
+    overlay.removeEventListener('mousemove', onMouseMove);
+    overlay.removeEventListener('mouseup', onMouseUp);
+    document.removeEventListener('keydown', onKeyDown, true);
+  };
+
+  // Esc (or a click without dragging) cancels and keeps the previous area
+  const cancel = () => {
+    finish();
+    chrome.runtime.sendMessage({ command: 'areaSelectionCancelled' });
+  };
+
+  const onKeyDown = (e) => {
+    if (e.key !== 'Escape') return;
+    e.preventDefault();
+    e.stopPropagation();
+    cancel();
+  };
+
   const onMouseUp = (e) => {
     if (!isDragging) return;
     isDragging = false;
@@ -377,11 +401,12 @@ function startSelection(ratio) {
     
     const x = currentX < startX ? startX - width : startX;
     const y = currentY < startY ? startY - height : startY;
-    
-    overlay.remove();
-    overlay.removeEventListener('mousedown', onMouseDown);
-    overlay.removeEventListener('mousemove', onMouseMove);
-    overlay.removeEventListener('mouseup', onMouseUp);
+
+    if (width < MIN_SELECTION_SIZE || height < MIN_SELECTION_SIZE) {
+      cancel();
+      return;
+    }
+    finish();
 
     const rect = { 
       x, 
@@ -403,6 +428,7 @@ function startSelection(ratio) {
   overlay.addEventListener('mousedown', onMouseDown);
   overlay.addEventListener('mousemove', onMouseMove);
   overlay.addEventListener('mouseup', onMouseUp);
+  document.addEventListener('keydown', onKeyDown, true);
 }
 })();
 

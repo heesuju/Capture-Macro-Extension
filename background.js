@@ -62,6 +62,7 @@ function saveOptions() {
 }
 
 let lastActionTime = 0;
+let pendingCaptureRatio = 'free';
 let captureCount = 0;
 let sessionPrefix = '';
 let currentSubfolder = '';
@@ -197,7 +198,8 @@ function handleMessage(message, sender, sendResponse) {
     sendResponse(state);
   } else if (message.command === 'startSelectingArea') {
     state.isSelectingArea = true;
-    state.captureRatio = message.ratio || 'free';
+    // Applied only once the area is drawn, so cancelling keeps the old one
+    pendingCaptureRatio = message.ratio || 'free';
     broadcastState();
 
     chrome.tabs.query({active: true, lastFocusedWindow: true}, function(tabs) {
@@ -211,13 +213,22 @@ function handleMessage(message, sender, sendResponse) {
             files: ['content.js']
         }).then(() => {
           chrome.tabs.sendMessage(tabs[0].id, { command: 'startSelectingArea', ratio: message.ratio }).catch(() => {});
-        }).catch(() => {});
+        }).catch(() => {
+          // Pages extensions can't script (chrome://, Web Store): don't stay stuck selecting
+          state.isSelectingArea = false;
+          broadcastState();
+        });
       }
     });
     sendResponse(state);
   } else if (message.command === 'areaSelected') {
     state.isSelectingArea = false;
     state.captureRect = message.rect;
+    state.captureRatio = pendingCaptureRatio;
+    broadcastState();
+    sendResponse(state);
+  } else if (message.command === 'areaSelectionCancelled') {
+    state.isSelectingArea = false;
     broadcastState();
     sendResponse(state);
   } else if (message.command === 'clearArea') {
