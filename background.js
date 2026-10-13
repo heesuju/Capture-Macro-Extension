@@ -227,6 +227,11 @@ function handleMessage(message, sender, sendResponse) {
     state.captureRatio = pendingCaptureRatio;
     broadcastState();
     sendResponse(state);
+  } else if (message.command === 'areaUpdated') {
+    // Area moved or resized on the page; keeps its ratio
+    state.captureRect = message.rect;
+    broadcastState();
+    sendResponse(state);
   } else if (message.command === 'areaSelectionCancelled') {
     state.isSelectingArea = false;
     broadcastState();
@@ -1017,6 +1022,8 @@ async function startPlayback(prefix) {
     console.log('Debugger attach skipped/failed (likely already attached):', err);
   }
   await startNetworkTracking(target);
+  // Macro clicks must reach the page, not the area box's grips
+  await chrome.tabs.sendMessage(tabId, { command: 'setRectLocked', locked: true }).catch(() => {});
 
   resetRunCounters();
   broadcastState();
@@ -1080,6 +1087,7 @@ async function startPlayback(prefix) {
   }
 
   networkTabId = null;
+  await chrome.tabs.sendMessage(tabId, { command: 'setRectLocked', locked: false }).catch(() => {});
   await chrome.debugger.detach(target).catch(() => {});
   await endPlayback();
 }
