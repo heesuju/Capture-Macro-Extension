@@ -293,7 +293,7 @@ document.addEventListener('DOMContentLoaded', () => {
     captureModeGroup.querySelectorAll('.segment-btn').forEach((btn) => {
       btn.classList.toggle('active', btn.dataset.mode === captureMode);
     });
-    zoomMultiplierGroup.style.display = captureMode === 'zoom_grid' ? 'flex' : 'none';
+    zoomMultiplierGroup.style.display = captureMode === 'zoom' ? 'flex' : 'none';
 
     const zoomMultiplier = state.zoomMultiplier || 2;
     zoomMultiplierGroup.querySelectorAll('.area-btn').forEach((btn) => {

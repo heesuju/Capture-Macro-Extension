@@ -42,15 +42,8 @@
     } else if (message.command === 'showRect') {
       if (captureRectDiv) captureRectDiv.style.display = 'block';
       sendResponse({ success: true });
-    } else if (message.command === 'getLayoutFingerprint') {
-      sendResponse(getLayoutFingerprint());
-    } else if (message.command === 'getZoomGridMetrics') {
-      sendResponse(getZoomGridMetrics());
-    } else if (message.command === 'scrollToGridPosition') {
-      window.scrollTo({ top: message.y, left: message.x, behavior: 'instant' });
-      sendResponse({ success: true });
     } else if (message.command === 'suppressStickyElements') {
-      suppressStickyElements(message.enable, message.mode);
+      suppressStickyElements(message.enable);
       sendResponse({ success: true });
     } else if (message.command === 'beginScrollStrip') {
       sendResponse(beginScrollStrip(message.rect));
@@ -59,46 +52,17 @@
     } else if (message.command === 'endScrollStrip') {
       endScrollStrip();
       sendResponse({ success: true });
-    } else if (message.command === 'getScreenInfo') {
-      sendResponse({
-        availLeft: window.screen.availLeft || 0,
-        availTop: window.screen.availTop || 0,
-        availWidth: window.screen.availWidth,
-        availHeight: window.screen.availHeight
-      });
     }
   });
-
-  function getLayoutFingerprint() {
-    const doc = document.documentElement;
-    return {
-      scrollWidth: doc.scrollWidth,
-      scrollHeight: doc.scrollHeight,
-      innerWidth: window.innerWidth,
-      innerHeight: window.innerHeight
-    };
-  }
-
-  function getZoomGridMetrics() {
-    const doc = document.documentElement;
-    return {
-      viewportWidth: window.innerWidth,
-      viewportHeight: window.innerHeight,
-      pageWidth: Math.max(doc.scrollWidth, document.body.scrollWidth),
-      pageHeight: Math.max(doc.scrollHeight, document.body.scrollHeight),
-      devicePixelRatio: window.devicePixelRatio || 1
-    };
-  }
 
   // el -> original inline visibility. Kept as a map so repeated enable calls
   // (one per tile) add newly-appearing elements without recording our own
   // 'hidden' as the value to restore.
   const suppressedStickyElements = new Map();
 
-  // mode 'edges' (zoom grid): hide fixed/sticky near the top/left edges.
-  // mode 'all' (scroll strip): hide every fixed element and every sticky
-  // element that is currently stuck, so nothing repeats down the strip.
-  function suppressStickyElements(enable, mode = 'edges') {
+  // Hides every fixed element and every sticky element that is currently
+  // stuck, so nothing repeats down a scroll strip.
+  function suppressStickyElements(enable) {
     if (!enable) {
       for (const [el, origVisibility] of suppressedStickyElements) {
         el.style.visibility = origVisibility;
@@ -114,13 +78,7 @@
       const rect = el.getBoundingClientRect();
       if (rect.width === 0 || rect.height === 0) continue;
 
-      let hide;
-      if (mode === 'all') {
-        hide = pos === 'fixed' || isStuck(el, style, rect);
-      } else {
-        hide = rect.top < 120 || rect.left < 120;
-      }
-      if (hide) {
+      if (pos === 'fixed' || isStuck(el, style, rect)) {
         suppressedStickyElements.set(el, el.style.visibility);
         el.style.visibility = 'hidden';
       }

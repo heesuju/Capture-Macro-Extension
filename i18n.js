@@ -36,7 +36,7 @@ const I18N = {
     captureModeLabel: 'Capture Mode',
     modeSingle: 'Standard',
     modeScroll: 'Scroll',
-    modeZoomGrid: 'Zoom Grid'
+    modeZoom: 'Zoom'
   },
   ko: {
     appTitle: 'CheeseIt',
@@ -74,6 +74,6 @@ const I18N = {
     captureModeLabel: '캡처 모드',
     modeSingle: '표준',
     modeScroll: '스크롤',
-    modeZoomGrid: '줌 그리드'
+    modeZoom: '줌'
   }
 };
