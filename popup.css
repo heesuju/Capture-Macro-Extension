@@ -578,43 +578,6 @@ select {
   cursor: pointer;
 }
 
-.shortcuts-header .link-btn {
-  margin-left: auto;
-}
-
-.link-btn {
-  background: none;
-  border: none;
-  padding: 0;
-  color: var(--accent-color);
-  font: inherit;
-  font-size: 0.78rem;
-  cursor: pointer;
-}
-
-.link-btn:hover {
-  text-decoration: underline;
-}
-
-.shortcut-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding-left: 23px;
-  font-size: 0.8rem;
-  color: var(--text-muted);
-}
-
-.shortcut-row kbd {
-  font-family: inherit;
-  font-size: 0.75rem;
-  padding: 2px 7px;
-  border: 1px solid var(--border-color);
-  border-radius: 4px;
-  background: var(--input-bg);
-  color: var(--text-color);
-}
-
 .number-input {
   width: 64px;
   padding: 5px 8px;

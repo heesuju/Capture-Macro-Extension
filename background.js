@@ -156,30 +156,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   return true;
 });
 
-// ── Keyboard shortcuts ─────────────────────────────────────────────────
-// Defined under "commands" in manifest.json; users can change them at
-// chrome://extensions/shortcuts. They act on the active tab like the popup.
-chrome.commands.onCommand.addListener((command) => { handleCommand(command); });
-
-async function handleCommand(command) {
-  await stateReady;
-  const ignore = () => {};
-  if (command === 'run-stop') {
-    // Same as the popup's Run/Stop button
-    if (state.isPlaying) {
-      handleMessage({ command: 'stopPlayback' }, null, ignore);
-    } else if (state.isRecording) {
-      handleMessage({ command: 'toggleRecording' }, null, ignore);
-    } else {
-      handleMessage({ command: 'startPlayback', prefix: state.prefix }, null, ignore);
-    }
-  } else if (command === 'capture-now') {
-    // One capture in the current mode, without the macro
-    if (!state.isPlaying && !state.isRecording) takeSingleCapture(state.prefix);
-  }
-  saveOptions();
-}
-
 function handleMessage(message, sender, sendResponse) {
   if (message.command === 'getState') {
     sendResponse(state);
