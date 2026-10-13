@@ -149,6 +149,7 @@ document.addEventListener('DOMContentLoaded', () => {
   document.querySelectorAll('.segment-btn[data-lang]').forEach((btn) => {
     btn.addEventListener('click', () => {
       applyLanguage(btn.dataset.lang);
+      renderShortcuts();
     });
   });
 
@@ -462,6 +463,21 @@ document.addEventListener('DOMContentLoaded', () => {
 
   autoStopCheckbox.addEventListener('change', () => {
     chrome.runtime.sendMessage({ command: 'updateOption', key: 'autoStopUnchanged', value: autoStopCheckbox.checked });
+  });
+
+  // ── Keyboard shortcuts (bound in chrome://extensions/shortcuts) ─────
+  function renderShortcuts() {
+    chrome.commands.getAll((commands) => {
+      const byName = Object.fromEntries(commands.map((c) => [c.name, c.shortcut]));
+      document.getElementById('shortcutRunStop').textContent = byName['run-stop'] || t('shortcutNotSet');
+      document.getElementById('shortcutCaptureNow').textContent = byName['capture-now'] || t('shortcutNotSet');
+    });
+  }
+  renderShortcuts();
+  document.getElementById('btnOpenSettings').addEventListener('click', renderShortcuts);
+
+  document.getElementById('btnChangeShortcuts').addEventListener('click', () => {
+    chrome.tabs.create({ url: 'chrome://extensions/shortcuts' });
   });
 
   maxCapturesInput.addEventListener('change', () => {

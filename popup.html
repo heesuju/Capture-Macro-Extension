@@ -343,6 +343,28 @@
           <input type="number" id="maxCapturesInput" class="number-input" min="0" step="1" value="0">
         </div>
 
+        <!-- Keyboard Shortcuts -->
+        <div class="setting-group">
+          <div class="setting-label shortcuts-header">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="2" y="6" width="20" height="12" rx="2"/>
+              <line x1="6" y1="10" x2="6" y2="10"/><line x1="10" y1="10" x2="10" y2="10"/>
+              <line x1="14" y1="10" x2="14" y2="10"/><line x1="18" y1="10" x2="18" y2="10"/>
+              <line x1="7" y1="14" x2="17" y2="14"/>
+            </svg>
+            <span data-i18n="shortcutsLabel">Keyboard shortcuts</span>
+            <button id="btnChangeShortcuts" class="link-btn" data-i18n="shortcutsChange">Change</button>
+          </div>
+          <div class="shortcut-row">
+            <span data-i18n="shortcutRunStop">Run / Stop</span>
+            <kbd id="shortcutRunStop"></kbd>
+          </div>
+          <div class="shortcut-row">
+            <span data-i18n="shortcutCaptureNow">Capture once now</span>
+            <kbd id="shortcutCaptureNow"></kbd>
+          </div>
+        </div>
+
         <!-- Version Info -->
         <div class="settings-footer">
           <span id="appVersion">Cheezing v1.0.0</span>

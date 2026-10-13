@@ -31,5 +31,19 @@
     "32": "icons/icon_32.png",
     "48": "icons/icon_48.png",
     "128": "icons/icon_128.png"
+  },
+  "commands": {
+    "run-stop": {
+      "suggested_key": {
+        "default": "Alt+Shift+R"
+      },
+      "description": "Run / Stop (실행 / 정지)"
+    },
+    "capture-now": {
+      "suggested_key": {
+        "default": "Alt+Shift+S"
+      },
+      "description": "Capture once now (지금 한 번 캡처)"
+    }
   }
 }

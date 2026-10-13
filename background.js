@@ -33,11 +33,33 @@ const MAX_STRIP_TILES = 200; // safety stop for infinite feeds that keep growing
 const CAPTURE_MIN_INTERVAL = 550; // captureVisibleTab is capped at 2 calls/sec
 const PDF_MAX_PAGE_DIM = 14400; // PDF spec limit for a page side, in points
 
-chrome.storage.local.get(['savedRecordings'], (result) => {
-  if (result.savedRecordings) {
-    state.savedRecordings = result.savedRecordings;
+// Settings that must survive Chrome shutting the service worker down when
+// idle (which resets everything in memory). Messages wait for this to load.
+const PERSISTED_KEYS = [
+  'captureMode', 'zoomMultiplier', 'createPdf', 'captureFirst', 'skipDuplicates',
+  'autoStopUnchanged', 'maxCaptures', 'macroEnabled', 'prefix', 'activeRecordingName'
+];
+
+const stateReady = chrome.storage.local.get(['savedRecordings', 'options']).then(({ savedRecordings, options }) => {
+  if (savedRecordings) state.savedRecordings = savedRecordings;
+  if (options) {
+    for (const key of PERSISTED_KEYS) {
+      if (key in options) state[key] = options[key];
+    }
+  }
+  // The selected recording's actions come from the saved recordings
+  if (state.activeRecordingName && state.savedRecordings[state.activeRecordingName]) {
+    state.actions = state.savedRecordings[state.activeRecordingName];
+  } else {
+    state.activeRecordingName = '';
   }
 });
+
+function saveOptions() {
+  const options = {};
+  for (const key of PERSISTED_KEYS) options[key] = state[key];
+  chrome.storage.local.set({ options });
+}
 
 let lastActionTime = 0;
 let captureCount = 0;
@@ -127,6 +149,38 @@ function generateRecordingName() {
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  stateReady.then(() => {
+    handleMessage(message, sender, sendResponse);
+    if (message.command !== 'getState' && message.command !== 'recordAction') saveOptions();
+  });
+  return true;
+});
+
+// ── Keyboard shortcuts ─────────────────────────────────────────────────
+// Defined under "commands" in manifest.json; users can change them at
+// chrome://extensions/shortcuts. They act on the active tab like the popup.
+chrome.commands.onCommand.addListener((command) => { handleCommand(command); });
+
+async function handleCommand(command) {
+  await stateReady;
+  const ignore = () => {};
+  if (command === 'run-stop') {
+    // Same as the popup's Run/Stop button
+    if (state.isPlaying) {
+      handleMessage({ command: 'stopPlayback' }, null, ignore);
+    } else if (state.isRecording) {
+      handleMessage({ command: 'toggleRecording' }, null, ignore);
+    } else {
+      handleMessage({ command: 'startPlayback', prefix: state.prefix }, null, ignore);
+    }
+  } else if (command === 'capture-now') {
+    // One capture in the current mode, without the macro
+    if (!state.isPlaying && !state.isRecording) takeSingleCapture(state.prefix);
+  }
+  saveOptions();
+}
+
+function handleMessage(message, sender, sendResponse) {
   if (message.command === 'getState') {
     sendResponse(state);
   } else if (message.command === 'toggleRecording') {
@@ -302,8 +356,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
     sendResponse(state);
   }
-  return true;
-});
+}
 
 async function performCapture(tabs, tabId, prefix) {
   // Ask before the tab is closed/reloaded/navigated mid-capture. Only during
