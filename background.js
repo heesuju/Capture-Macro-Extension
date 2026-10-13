@@ -58,22 +58,49 @@ async function getNextRunSubfolder() {
   return `${today}_${nextIndex}`;
 }
 
-function updateBadge() {
-  if (state.isRecording) {
-    chrome.action.setBadgeBackgroundColor({ color: '#e94560' });
-    // No glyph while idle-recording — a bare space renders as a plain red dot,
-    // avoiding off-center symbol glyphs. Digits center fine once actions exist.
-    chrome.action.setBadgeText({ text: state.actions.length > 0 ? String(state.actions.length) : ' ' });
-  } else if (state.isPlaying) {
-    chrome.action.setBadgeBackgroundColor({ color: '#4caf50' });
-    chrome.action.setBadgeText({ text: ' ' });
-  } else {
-    chrome.action.setBadgeText({ text: '' });
+// Status is shown by lighting up the camera lens in the toolbar icon (a
+// badge can't be positioned or shaped). Lens centre/radius are fractions of
+// the icon size, measured from the icon artwork.
+const LENS = { x: 0.504, y: 0.621, r: 0.15 };
+const STATUS_COLORS = { recording: '#e94560', playing: '#4caf50' };
+const STATUS_ICON_SIZES = [16, 32];
+const DEFAULT_ICON = { 16: 'icons/icon_16.png', 32: 'icons/icon_32.png', 48: 'icons/icon_48.png', 128: 'icons/icon_128.png' };
+let iconBitmaps = null;
+let shownStatus = null;
+
+async function updateStatusIcon() {
+  const status = state.isRecording ? 'recording' : state.isPlaying ? 'playing' : null;
+  if (status === shownStatus) return;
+  shownStatus = status;
+
+  if (!status) {
+    await chrome.action.setIcon({ path: DEFAULT_ICON });
+    return;
   }
+
+  if (!iconBitmaps) {
+    iconBitmaps = await Promise.all(STATUS_ICON_SIZES.map(async (size) => {
+      const response = await fetch(chrome.runtime.getURL(DEFAULT_ICON[size]));
+      return createImageBitmap(await response.blob());
+    }));
+  }
+  if (shownStatus !== status) return; // status changed while the icons loaded
+
+  const imageData = {};
+  STATUS_ICON_SIZES.forEach((size, i) => {
+    const ctx = new OffscreenCanvas(size, size).getContext('2d');
+    ctx.drawImage(iconBitmaps[i], 0, 0, size, size);
+    ctx.fillStyle = STATUS_COLORS[status];
+    ctx.beginPath();
+    ctx.arc(LENS.x * size, LENS.y * size, LENS.r * size, 0, Math.PI * 2);
+    ctx.fill();
+    imageData[size] = ctx.getImageData(0, 0, size, size);
+  });
+  await chrome.action.setIcon({ imageData });
 }
 
 function broadcastState() {
-  updateBadge();
+  updateStatusIcon().catch(() => {});
   chrome.runtime.sendMessage({ type: 'STATE_UPDATE', state }).catch(() => {});
 }
 
