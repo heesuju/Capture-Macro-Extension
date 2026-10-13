@@ -50,7 +50,14 @@
       window.scrollTo({ top: message.y, left: message.x, behavior: 'instant' });
       sendResponse({ success: true });
     } else if (message.command === 'suppressStickyElements') {
-      suppressStickyElements(message.enable);
+      suppressStickyElements(message.enable, message.mode);
+      sendResponse({ success: true });
+    } else if (message.command === 'beginScrollStrip') {
+      sendResponse(beginScrollStrip(message.rect));
+    } else if (message.command === 'scrollStripTo') {
+      sendResponse(scrollStripTo(message.y));
+    } else if (message.command === 'endScrollStrip') {
+      endScrollStrip();
       sendResponse({ success: true });
     } else if (message.command === 'getScreenInfo') {
       sendResponse({
@@ -83,28 +90,157 @@
     };
   }
 
-  let suppressedStickyElements = [];
+  // el -> original inline visibility. Kept as a map so repeated enable calls
+  // (one per tile) add newly-appearing elements without recording our own
+  // 'hidden' as the value to restore.
+  const suppressedStickyElements = new Map();
 
-  function suppressStickyElements(enable) {
-    if (enable) {
-      suppressedStickyElements = [];
-      const elements = document.querySelectorAll('*');
-      for (const el of elements) {
-        const pos = window.getComputedStyle(el).position;
-        if (pos === 'fixed' || pos === 'sticky') {
-          const rect = el.getBoundingClientRect();
-          if (rect.top < 120 || rect.left < 120) {
-            suppressedStickyElements.push({ el, origVisibility: el.style.visibility });
-            el.style.visibility = 'hidden';
-          }
-        }
+  // mode 'edges' (zoom grid): hide fixed/sticky near the top/left edges.
+  // mode 'all' (scroll strip): hide every fixed element and every sticky
+  // element that is currently stuck, so nothing repeats down the strip.
+  function suppressStickyElements(enable, mode = 'edges') {
+    if (!enable) {
+      for (const [el, origVisibility] of suppressedStickyElements) {
+        el.style.visibility = origVisibility;
       }
-    } else {
-      for (const item of suppressedStickyElements) {
-        item.el.style.visibility = item.origVisibility;
-      }
-      suppressedStickyElements = [];
+      suppressedStickyElements.clear();
+      return;
     }
+    for (const el of document.querySelectorAll('*')) {
+      if (suppressedStickyElements.has(el) || el === captureRectDiv) continue;
+      const style = window.getComputedStyle(el);
+      const pos = style.position;
+      if (pos !== 'fixed' && pos !== 'sticky') continue;
+      const rect = el.getBoundingClientRect();
+      if (rect.width === 0 || rect.height === 0) continue;
+
+      let hide;
+      if (mode === 'all') {
+        hide = pos === 'fixed' || isStuck(el, style, rect);
+      } else {
+        hide = rect.top < 120 || rect.left < 120;
+      }
+      if (hide) {
+        suppressedStickyElements.set(el, el.style.visibility);
+        el.style.visibility = 'hidden';
+      }
+    }
+  }
+
+  // A sticky element in normal flow is regular page content and must stay
+  // visible; only hide it while it is pinned to its scroll container's edge.
+  function isStuck(el, style, rect) {
+    const scroller = findScrollParent(el.parentElement);
+    const box = scroller ? scroller.getBoundingClientRect() : { top: 0, bottom: window.innerHeight };
+    const top = parseFloat(style.top);
+    const bottom = parseFloat(style.bottom);
+    if (!isNaN(top) && Math.abs(rect.top - (box.top + top)) < 2) return true;
+    if (!isNaN(bottom) && Math.abs(box.bottom - bottom - rect.bottom) < 2) return true;
+    return false;
+  }
+
+  function isScrollable(el) {
+    if (!el || el === document.body || el === document.documentElement) return false;
+    const oy = window.getComputedStyle(el).overflowY;
+    return (oy === 'auto' || oy === 'scroll' || oy === 'overlay') && el.scrollHeight > el.clientHeight + 1;
+  }
+
+  function findScrollParent(el) {
+    while (el && el !== document.body && el !== document.documentElement) {
+      if (isScrollable(el)) return el;
+      el = el.parentElement;
+    }
+    return null;
+  }
+
+  // ── Scroll strip ────────────────────────────────────────────────────
+  // The strip is built by scrolling one "scroller" (the window, or an inner
+  // scrollable element under the selected area) and capturing a fixed
+  // viewport region each step. Positions are reported back as actually
+  // reached, so the background can crop away any overlap exactly.
+  let stripScroller = null; // null = window
+  let stripOrigin = null;   // scroll position to restore afterwards
+
+  function windowRegion() {
+    // clientWidth/Height exclude scrollbars, so they never end up in the strip
+    const doc = document.documentElement;
+    return { x: 0, y: 0, width: doc.clientWidth, height: doc.clientHeight };
+  }
+
+  function elementRegion(el) {
+    const r = el.getBoundingClientRect();
+    return {
+      x: r.left + el.clientLeft,
+      y: r.top + el.clientTop,
+      width: el.clientWidth,
+      height: el.clientHeight
+    };
+  }
+
+  function intersect(a, b) {
+    const x = Math.max(a.x, b.x);
+    const y = Math.max(a.y, b.y);
+    const right = Math.min(a.x + a.width, b.x + b.width);
+    const bottom = Math.min(a.y + a.height, b.y + b.height);
+    return { x, y, width: Math.max(0, right - x), height: Math.max(0, bottom - y) };
+  }
+
+  function scrollTop() {
+    return stripScroller ? stripScroller.scrollTop : window.scrollY;
+  }
+
+  function maxScrollTop() {
+    if (stripScroller) return stripScroller.scrollHeight - stripScroller.clientHeight;
+    const doc = document.documentElement;
+    return Math.max(doc.scrollHeight, document.body.scrollHeight) - doc.clientHeight;
+  }
+
+  function beginScrollStrip(rect) {
+    stripScroller = null;
+    let region = windowRegion();
+
+    if (rect) {
+      // If the selection sits on an inner scrollable panel (chat log, table,
+      // side pane...), scroll that panel instead of the page.
+      if (captureRectDiv) captureRectDiv.style.display = 'none';
+      const hit = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2);
+      stripScroller = findScrollParent(hit);
+      if (stripScroller) region = elementRegion(stripScroller);
+      region = intersect(region, rect);
+    }
+
+    stripOrigin = stripScroller
+      ? { el: stripScroller, top: stripScroller.scrollTop }
+      : { x: window.scrollX, y: window.scrollY };
+
+    return {
+      region,
+      innerWidth: window.innerWidth,
+      innerHeight: window.innerHeight,
+      scroller: stripScroller ? 'element' : 'window'
+    };
+  }
+
+  function scrollStripTo(y) {
+    if (stripScroller) {
+      stripScroller.scrollTo({ top: y, behavior: 'instant' });
+    } else {
+      window.scrollTo({ top: y, left: window.scrollX, behavior: 'instant' });
+    }
+    return { actual: scrollTop(), maxScroll: maxScrollTop() };
+  }
+
+  function endScrollStrip() {
+    suppressStickyElements(false);
+    if (stripOrigin) {
+      if (stripOrigin.el) {
+        stripOrigin.el.scrollTo({ top: stripOrigin.top, behavior: 'instant' });
+      } else {
+        window.scrollTo({ top: stripOrigin.y, left: stripOrigin.x, behavior: 'instant' });
+      }
+    }
+    stripScroller = null;
+    stripOrigin = null;
   }
 
   document.addEventListener('mousedown', (e) => {

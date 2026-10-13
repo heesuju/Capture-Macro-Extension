@@ -12,12 +12,18 @@ let state = {
   savedRecordings: {},
   activeRecordingName: '',
   createPdf: true,
-  captureMode: 'single', // 'single' | 'zoom_grid'
+  captureMode: 'single', // 'single' | 'scroll' | 'zoom_grid'
   zoomMultiplier: 2       // 2 | 3 | 4 -- quality multiplier for zoom_grid mode
 };
 
 const MAX_CANVAS_DIM = 16000; // stay under the ~16384/32768px canvas ceiling in both browsers
 const ZOOM_SETTLE_DELAY = 300; // ms to let layout/zoom settle before each grid tile capture
+const SCROLL_SETTLE_DELAY = 250; // ms to let lazy content/repaints settle after each scroll step
+const MAX_STRIP_HEIGHT = 32000; // px per stitched strip file (canvas dimension limit is 32767)
+const MAX_STRIP_AREA = 64000000; // px per stitched strip file, keeps canvas memory ~256MB
+const MAX_STRIP_TILES = 200; // safety stop for infinite feeds that keep growing
+const CAPTURE_MIN_INTERVAL = 550; // captureVisibleTab is capped at 2 calls/sec
+const PDF_MAX_PAGE_DIM = 14400; // PDF spec limit for a page side, in points
 
 chrome.storage.local.get(['savedRecordings'], (result) => {
   if (result.savedRecordings) {
@@ -258,6 +264,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 async function performCapture(tabs, tabId, prefix) {
   if (state.captureMode === 'zoom_grid') {
     await captureZoomGrid(tabs, tabId, prefix);
+  } else if (state.captureMode === 'scroll') {
+    await captureScrollStrip(tabs, tabId, prefix);
   } else {
     await captureScreenshot(tabs, tabId, prefix);
   }
@@ -279,6 +287,140 @@ async function captureScreenshot(tabs, tabId, prefix) {
   }
 
   await saveCapture(dataUrl, prefix);
+}
+
+// Rate-limited captureVisibleTab: multi-tile modes fire many captures in a
+// row and Chrome rejects anything faster than 2/sec.
+let lastCaptureAt = 0;
+async function captureTab(windowId) {
+  for (let attempt = 0; ; attempt++) {
+    const wait = lastCaptureAt + CAPTURE_MIN_INTERVAL - Date.now();
+    if (wait > 0) await sleep(wait);
+    lastCaptureAt = Date.now();
+    try {
+      return await chrome.tabs.captureVisibleTab(windowId, { format: 'png' });
+    } catch (err) {
+      const rateLimited = /MAX_CAPTURE_VISIBLE_TAB_CALLS_PER_SECOND/.test(String(err && err.message));
+      if (!rateLimited || attempt >= 3) throw err;
+    }
+  }
+}
+
+// ── Scroll Strip Capture ───────────────────────────────────────────────
+// Scrolls the page (or the scrollable panel under the selected area) one
+// region-height at a time and stitches every step into one continuous image.
+// Each step crops from the position the scroller actually reached, so the
+// last step (which can't scroll a full height) contributes only new rows.
+async function captureScrollStrip(tabs, tabId, prefix) {
+  const windowId = tabs[0].windowId;
+
+  await chrome.scripting.executeScript({ target: { tabId }, files: ['content.js'] }).catch(() => {});
+  await chrome.tabs.sendMessage(tabId, { command: 'hideRect' }).catch(() => {});
+
+  const plan = await chrome.tabs.sendMessage(tabId, { command: 'beginScrollStrip', rect: state.captureRect });
+  const region = plan.region;
+  const step = Math.floor(region.height);
+  if (step < 1 || region.width < 1) {
+    throw new Error('Scroll capture aborted: the capture area is empty.');
+  }
+
+  let writer = null;
+
+  try {
+    let target = 0;
+    for (let i = 0; i < MAX_STRIP_TILES && state.isPlaying; i++) {
+      const { actual, maxScroll } = await chrome.tabs.sendMessage(tabId, { command: 'scrollStripTo', y: target });
+      if (i > 0) {
+        // Fixed headers/footers/floating buttons would otherwise repeat on every step
+        await chrome.tabs.sendMessage(tabId, { command: 'suppressStickyElements', enable: true, mode: 'all' }).catch(() => {});
+      }
+      await sleep(SCROLL_SETTLE_DELAY);
+
+      const bitmap = await dataUrlToBitmap(await captureTab(windowId));
+      // Derive the CSS->pixel scale from the capture itself, per axis
+      const scaleX = bitmap.width / plan.innerWidth;
+      const scaleY = bitmap.height / plan.innerHeight;
+
+      // Rows already captured by the previous step sit at the top of the
+      // region when the scroller couldn't reach `target`. Positions are rounded
+      // in absolute strip coordinates so fractional DPRs never leave a seam.
+      const skip = target - actual;
+      if (skip >= region.height) break;
+      const stripTop = Math.round(target * scaleY);
+      const stripBottom = Math.round((actual + region.height) * scaleY);
+      const sx = Math.round(region.x * scaleX);
+      const sy = Math.round((region.y + skip) * scaleY);
+      const sw = Math.round(region.width * scaleX);
+      const sh = Math.min(stripBottom - stripTop, bitmap.height - sy);
+      if (sh <= 0) break;
+
+      if (!writer) writer = new StripWriter(prefix, sw);
+      const remaining = Math.round((maxScroll + region.height) * scaleY) - stripTop;
+      await writer.add(bitmap, sx, sy, sh, remaining);
+
+      if (actual >= maxScroll - 0.5) break; // reached the end
+      target += step;
+    }
+
+    if (writer) await writer.finish();
+  } finally {
+    await chrome.tabs.sendMessage(tabId, { command: 'endScrollStrip' }).catch(() => {});
+    if (state.captureRect) {
+      await chrome.tabs.sendMessage(tabId, { command: 'showRect' }).catch(() => {});
+    }
+  }
+}
+
+// Draws strip tiles straight into a canvas as they arrive. When the strip
+// outgrows canvas limits it is saved as consecutive _partN files that line up
+// edge to edge with no overlap.
+class StripWriter {
+  constructor(prefix, width) {
+    this.prefix = prefix;
+    this.width = width;
+    this.number = ++captureCount;
+    this.parts = 0;
+    this.canvas = null;
+    this.ctx = null;
+    this.y = 0;
+    this.partLimit = Math.max(1, Math.min(MAX_STRIP_HEIGHT, Math.floor(MAX_STRIP_AREA / width)));
+  }
+
+  async add(bitmap, sx, sy, sh, remainingEstimate) {
+    if (this.canvas && this.y + sh > this.canvas.height) {
+      await this.flush(false);
+    }
+    if (!this.canvas) {
+      // Size to the expected remaining height plus one tile of slack for
+      // rounding; flush() trims any excess, and a new part starts only if the
+      // page genuinely grows past it (lazy loading).
+      const height = Math.min(this.partLimit, remainingEstimate + sh);
+      this.canvas = new OffscreenCanvas(this.width, height);
+      this.ctx = this.canvas.getContext('2d');
+      this.y = 0;
+    }
+    this.ctx.drawImage(bitmap, sx, sy, this.width, sh, 0, this.y, this.width, sh);
+    this.y += sh;
+  }
+
+  async flush(isFinal) {
+    if (!this.canvas || this.y === 0) return;
+    let out = this.canvas;
+    if (this.y < out.height) {
+      out = new OffscreenCanvas(this.width, this.y);
+      out.getContext('2d').drawImage(this.canvas, 0, 0);
+    }
+    const dataUrl = await blobToDataUrl(await out.convertToBlob({ type: 'image/png' }));
+    const suffix = isFinal && this.parts === 0 ? '' : `_part${++this.parts}`;
+    await saveCapture(dataUrl, this.prefix, { number: this.number, suffix });
+    this.canvas = null;
+    this.ctx = null;
+    this.y = 0;
+  }
+
+  async finish() {
+    await this.flush(true);
+  }
 }
 
 // ── Zoom Grid Capture ──────────────────────────────────────────────────
@@ -418,7 +560,7 @@ async function captureZoomGridFullPage(tabs, tabId, prefix) {
         }
         await sleep(ZOOM_SETTLE_DELAY);
 
-        const dataUrl = await chrome.tabs.captureVisibleTab(windowId, { format: 'png' });
+        const dataUrl = await captureTab(windowId);
         let bitmap = await dataUrlToBitmap(dataUrl);
 
         if (cropLeftPx > 0 || cropTopPx > 0) {
@@ -487,9 +629,9 @@ async function downloadNumbered(dataUrl, prefix, suffix) {
   await chrome.downloads.download({ url: dataUrl, filename: filePath, saveAs: false });
 }
 
-async function saveCapture(dataUrl, prefix) {
-  captureCount++;
-  const filename = `${prefix}_${captureCount.toString().padStart(3, '0')}.png`;
+async function saveCapture(dataUrl, prefix, { number, suffix = '' } = {}) {
+  if (number === undefined) number = ++captureCount;
+  const filename = `${prefix}_${number.toString().padStart(3, '0')}${suffix}.png`;
   const filePath = currentSubfolder ? `${currentSubfolder}/${filename}` : filename;
 
   await chrome.downloads.download({
@@ -805,14 +947,13 @@ async function generateAndDownloadPdf(captures, prefix, subfolder) {
       const pngBytes = Uint8Array.from(atob(base64Data), c => c.charCodeAt(0));
       const pngImage = await pdfDoc.embedPng(pngBytes);
 
-      // Create a page exactly the same size as the image (1pt = 1px)
-      const page = pdfDoc.addPage([capture.width, capture.height]);
-      page.drawImage(pngImage, {
-        x: 0,
-        y: 0,
-        width: capture.width,
-        height: capture.height
-      });
+      // Create a page exactly the same size as the image (1pt = 1px), scaled
+      // down only when a long strip exceeds the PDF page size limit (14400pt)
+      const fit = Math.min(1, PDF_MAX_PAGE_DIM / Math.max(capture.width, capture.height));
+      const width = capture.width * fit;
+      const height = capture.height * fit;
+      const page = pdfDoc.addPage([width, height]);
+      page.drawImage(pngImage, { x: 0, y: 0, width, height });
     }
 
     const pdfBytes = await pdfDoc.save();
