@@ -174,7 +174,7 @@
     return {
       region,
       innerWidth: window.innerWidth,
-      innerHeight: window.innerHeight,
+      devicePixelRatio: window.devicePixelRatio || 1,
       scroller: stripScroller ? 'element' : 'window'
     };
   }

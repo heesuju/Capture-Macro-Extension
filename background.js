@@ -321,7 +321,10 @@ async function captureScrollStrip(tabs, tabId, prefix) {
 
   const plan = await chrome.tabs.sendMessage(tabId, { command: 'beginScrollStrip', rect: state.captureRect });
   const region = plan.region;
-  const step = Math.floor(region.height);
+  // Steps overlap by 1 CSS px: at fractional zoom/DPR the scroll position
+  // snaps to device pixels and can land slightly short of the target, and the
+  // overlap guarantees no gap. Duplicate rows are cropped below.
+  const step = Math.floor(region.height) - 1;
   if (step < 1 || region.width < 1) {
     throw new Error('Scroll capture aborted: the capture area is empty.');
   }
@@ -330,6 +333,7 @@ async function captureScrollStrip(tabs, tabId, prefix) {
 
   try {
     let target = 0;
+    let writtenPx = 0; // strip rows saved so far; strip row 0 = scroll position 0
     for (let i = 0; i < MAX_STRIP_TILES && state.isPlaying; i++) {
       const { actual, maxScroll } = await chrome.tabs.sendMessage(tabId, { command: 'scrollStripTo', y: target });
       if (i > 0) {
@@ -339,28 +343,32 @@ async function captureScrollStrip(tabs, tabId, prefix) {
       await sleep(SCROLL_SETTLE_DELAY);
 
       const bitmap = await dataUrlToBitmap(await captureTab(windowId));
-      // Derive the CSS->pixel scale from the capture itself, per axis
-      const scaleX = bitmap.width / plan.innerWidth;
-      const scaleY = bitmap.height / plan.innerHeight;
+      // devicePixelRatio is exact (includes page zoom); innerWidth is rounded
+      // to whole CSS px, so only fall back to the measured ratio if the
+      // capture doesn't match the reported DPR.
+      const measured = bitmap.width / plan.innerWidth;
+      const scale = Math.abs(measured - plan.devicePixelRatio) * plan.innerWidth <= 2
+        ? plan.devicePixelRatio
+        : measured;
 
-      // Rows already captured by the previous step sit at the top of the
-      // region when the scroller couldn't reach `target`. Positions are rounded
-      // in absolute strip coordinates so fractional DPRs never leave a seam.
-      const skip = target - actual;
-      if (skip >= region.height) break;
-      const stripTop = Math.round(target * scaleY);
-      const stripBottom = Math.round((actual + region.height) * scaleY);
-      const sx = Math.round(region.x * scaleX);
-      const sy = Math.round((region.y + skip) * scaleY);
-      const sw = Math.round(region.width * scaleX);
-      const sh = Math.min(stripBottom - stripTop, bitmap.height - sy);
-      if (sh <= 0) break;
+      // Work in absolute device-pixel rows: this capture shows strip rows
+      // [tileTop, tileTop + regionH). Keep only rows not yet written.
+      const tileTop = Math.round(actual * scale);
+      const regionH = Math.floor(region.height * scale);
+      const from = Math.max(writtenPx, tileTop);
+      const sx = Math.round(region.x * scale);
+      const sy = Math.round(region.y * scale) + (from - tileTop);
+      const sw = Math.round(region.width * scale);
+      const sh = Math.min(tileTop + regionH - from, bitmap.height - sy);
+      const isLast = actual >= maxScroll - 0.5;
+      if (sh > 0) {
+        if (!writer) writer = new StripWriter(prefix, sw);
+        const remaining = Math.round(maxScroll * scale) + regionH - from;
+        await writer.add(bitmap, sx, sy, sh, remaining);
+        writtenPx = from + sh;
+      }
 
-      if (!writer) writer = new StripWriter(prefix, sw);
-      const remaining = Math.round((maxScroll + region.height) * scaleY) - stripTop;
-      await writer.add(bitmap, sx, sy, sh, remaining);
-
-      if (actual >= maxScroll - 0.5) break; // reached the end
+      if (isLast || actual + 0.5 < target - step) break; // reached the end / scroller stuck
       target += step;
     }
 
@@ -449,10 +457,10 @@ async function captureZoom(tabs, tabId, prefix) {
       // which shrinks the page. Pin the layout to the pre-attach size so the
       // zoomed image covers exactly what a Standard capture would (incl. fixed
       // footers), then let it repaint -- earlier screenshots return stale tiles.
-      const zoom = await chrome.tabs.getZoom(tabId);
+      // tab width/height are unzoomed px, which is what the override expects
       await chrome.debugger.sendCommand(target, 'Emulation.setDeviceMetricsOverride', {
-        width: Math.round(tabBefore.width / zoom),
-        height: Math.round(tabBefore.height / zoom),
+        width: tabBefore.width,
+        height: tabBefore.height,
         deviceScaleFactor: 0,
         mobile: false
       });
@@ -467,50 +475,52 @@ async function captureZoom(tabs, tabId, prefix) {
 
     const metrics = await chrome.debugger.sendCommand(target, 'Page.getLayoutMetrics');
     const vv = metrics.cssVisualViewport;
-    // visualViewport is in device px, cssVisualViewport in CSS px
-    const dpr = (metrics.visualViewport && metrics.visualViewport.clientWidth / vv.clientWidth) || 1;
+    // Screenshot clips are measured in zoomed px (CSS px x browser zoom), and
+    // each clip unit becomes `deviceScale` output px at clip.scale = 1.
+    const zoom = vv.zoom || 1;
+    const deviceScale = (metrics.visualViewport && metrics.visualViewport.clientWidth / (vv.clientWidth * zoom)) || 1;
 
     // Viewport-relative CSS region; clientWidth/Height exclude scrollbars
     const viewportRegion = { x: 0, y: 0, width: vv.clientWidth, height: vv.clientHeight };
-    const region = state.captureRect ? intersectRect(viewportRegion, state.captureRect) : viewportRegion;
-    if (region.width < 1 || region.height < 1) {
+    const cssRegion = state.captureRect ? intersectRect(viewportRegion, state.captureRect) : viewportRegion;
+    if (cssRegion.width < 1 || cssRegion.height < 1) {
       throw new Error('Zoom capture aborted: the capture area is empty.');
     }
+    const region = {
+      x: (vv.pageX + cssRegion.x) * zoom,
+      y: (vv.pageY + cssRegion.y) * zoom,
+      width: cssRegion.width * zoom,
+      height: cssRegion.height * zoom
+    };
 
-    // Output px per CSS px. Capped so the stitched image stays within canvas limits.
+    // Output px per clip unit. Capped so the stitched image stays within canvas limits.
     let multiplier = state.zoomMultiplier || 2;
     const maxScale = Math.min(
       MAX_ZOOM_DIM / region.width,
       MAX_ZOOM_DIM / region.height,
       Math.sqrt(MAX_ZOOM_AREA / (region.width * region.height))
-    ) / dpr;
+    ) / deviceScale;
     if (multiplier > maxScale) {
       console.warn(`CheeseIt: zoom ${multiplier}x exceeds canvas limits for this area, using ${maxScale.toFixed(2)}x`);
       multiplier = Math.max(1, maxScale);
     }
-    const scale = multiplier * dpr;
+    const scale = multiplier * deviceScale;
     const outW = Math.round(region.width * scale);
     const outH = Math.round(region.height * scale);
 
-    // Tile in CSS px, placed by rounding absolute positions so tiles meet exactly
-    const tileCss = Math.max(1, Math.floor(ZOOM_TILE_PX / scale));
+    // Tile in clip units, placed by rounding absolute positions so tiles meet exactly
+    const tileSize = Math.max(1, Math.floor(ZOOM_TILE_PX / scale));
     const canvas = new OffscreenCanvas(outW, outH);
     const ctx = canvas.getContext('2d');
 
-    for (let ty = 0; ty < region.height; ty += tileCss) {
-      const th = Math.min(tileCss, region.height - ty);
-      for (let tx = 0; tx < region.width; tx += tileCss) {
-        const tw = Math.min(tileCss, region.width - tx);
+    for (let ty = 0; ty < region.height; ty += tileSize) {
+      const th = Math.min(tileSize, region.height - ty);
+      for (let tx = 0; tx < region.width; tx += tileSize) {
+        const tw = Math.min(tileSize, region.width - tx);
         const shot = await chrome.debugger.sendCommand(target, 'Page.captureScreenshot', {
           format: 'png',
-          // clip is in document coordinates, so offset by the scroll position
-          clip: {
-            x: vv.pageX + region.x + tx,
-            y: vv.pageY + region.y + ty,
-            width: tw,
-            height: th,
-            scale: multiplier
-          }
+          // clip is in document coordinates (region already includes the scroll offset)
+          clip: { x: region.x + tx, y: region.y + ty, width: tw, height: th, scale: multiplier }
         });
         const bitmap = await dataUrlToBitmap('data:image/png;base64,' + shot.data);
         const dx = Math.round(tx * scale);
