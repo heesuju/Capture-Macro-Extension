@@ -157,6 +157,33 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   return true;
 });
 
+function clearCaptureArea(tabId) {
+  state.captureRect = null;
+  const send = (id) => chrome.tabs.sendMessage(id, { command: 'clearArea' }).catch(() => {});
+  if (tabId !== null) {
+    send(tabId);
+  } else {
+    chrome.tabs.query({ active: true, lastFocusedWindow: true }, (tabs) => {
+      if (tabs[0]) send(tabs[0].id);
+    });
+  }
+  broadcastState();
+}
+
+// The user closed Chrome's "is debugging this browser" bar (its Cancel
+// button). That ends the area-selection session: stop a running macro, which
+// can't click without the debugger, and clear the capture area.
+chrome.debugger.onDetach.addListener((source, reason) => { onDebuggerDetach(source, reason); });
+
+async function onDebuggerDetach(source, reason) {
+  if (reason !== 'canceled_by_user') return;
+  await stateReady;
+  if (state.isPlaying) state.isPlaying = false;
+  if (state.captureRect) clearCaptureArea(source.tabId ?? null);
+  broadcastState();
+  saveOptions();
+}
+
 function handleMessage(message, sender, sendResponse) {
   if (message.command === 'getState') {
     sendResponse(state);
@@ -237,13 +264,8 @@ function handleMessage(message, sender, sendResponse) {
     broadcastState();
     sendResponse(state);
   } else if (message.command === 'clearArea') {
-    state.captureRect = null;
-    chrome.tabs.query({active: true, lastFocusedWindow: true}, function(tabs) {
-      if (tabs[0]) {
-        chrome.tabs.sendMessage(tabs[0].id, { command: 'clearArea' }).catch(() => {});
-      }
-    });
-    broadcastState();
+    // From the popup's Full button, or the area's own close button
+    clearCaptureArea(sender && sender.tab ? sender.tab.id : null);
     sendResponse(state);
   } else if (message.command === 'clearActions') {
     state.actions = [];
@@ -280,14 +302,8 @@ function handleMessage(message, sender, sendResponse) {
     }
     sendResponse(state);
   } else if (message.command === 'stopPlayback') {
+    // The area stays shown: it is still the active capture area
     state.isPlaying = false;
-    
-    chrome.tabs.query({active: true, lastFocusedWindow: true}, function(tabs) {
-      if (tabs[0]) {
-        chrome.tabs.sendMessage(tabs[0].id, { command: 'hideRect' }).catch(() => {});
-      }
-    });
-
     broadcastState();
     sendResponse(state);
   } else if (message.command === 'updatePrefix') {

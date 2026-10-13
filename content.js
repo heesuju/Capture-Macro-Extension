@@ -43,6 +43,7 @@
       if (captureRectDiv) {
         captureRectDiv.remove();
         captureRectDiv = null;
+        currentRect = null;
       }
       sendResponse({ success: true });
     } else if (message.command === 'hideRect') {
@@ -363,6 +364,39 @@ function buildRectBox() {
     handle.addEventListener('mousedown', (e) => startRectDrag(e, name));
     captureRectDiv.appendChild(handle);
   }
+
+  // Close button above the top-right corner: clears the area
+  const closeBtn = document.createElement('div');
+  closeBtn.dataset.cheezingGrip = 'close';
+  closeBtn.textContent = '×';
+  chrome.storage.local.get('settings', ({ settings }) => {
+    closeBtn.title = settings && settings.language === 'ko' ? '영역 지우기' : 'Clear area';
+  });
+  Object.assign(closeBtn.style, {
+    position: 'absolute',
+    right: '-2px',
+    bottom: '100%',
+    marginBottom: '6px',
+    width: '18px',
+    height: '18px',
+    borderRadius: '50%',
+    background: 'red',
+    color: '#fff',
+    font: '700 14px/18px sans-serif',
+    textAlign: 'center',
+    cursor: 'pointer',
+    userSelect: 'none'
+  });
+  closeBtn.addEventListener('mousedown', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+  });
+  closeBtn.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    chrome.runtime.sendMessage({ command: 'clearArea' });
+  });
+  captureRectDiv.appendChild(closeBtn);
 
   // Size readout shown while dragging
   sizeTag = document.createElement('div');
