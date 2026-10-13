@@ -34,9 +34,13 @@ const I18N = {
     areaRatioFree: 'Free',
     createPdfLabel: 'Create PDF after capture',
     captureModeLabel: 'Capture Mode',
-    modeSingle: 'Standard',
-    modeScroll: 'Scroll',
-    modeZoom: 'Zoom'
+    modeSingle: 'Screen',
+    modeSingleTip: 'Capture what is visible on screen',
+    modeScroll: 'Long',
+    modeScrollTip: 'Scroll to the end and capture the whole page as one long image',
+    modeZoom: 'Hi-Res',
+    modeZoomTip: 'Capture what is visible on screen at higher resolution',
+    zoomMultiplierTip: 'Resolution multiplier'
   },
   ko: {
     appTitle: 'CheeseIt',
@@ -72,8 +76,12 @@ const I18N = {
     areaRatioFree: '자유',
     createPdfLabel: '캡처 후 PDF 생성',
     captureModeLabel: '캡처 모드',
-    modeSingle: '표준',
-    modeScroll: '스크롤',
-    modeZoom: '줌'
+    modeSingle: '화면',
+    modeSingleTip: '현재 보이는 화면을 캡처',
+    modeScroll: '긴 캡처',
+    modeScrollTip: '페이지 끝까지 스크롤해 한 장의 긴 이미지로 캡처',
+    modeZoom: '고화질',
+    modeZoomTip: '보이는 화면을 더 높은 해상도로 캡처',
+    zoomMultiplierTip: '해상도 배율'
   }
 };

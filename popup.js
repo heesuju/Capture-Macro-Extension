@@ -20,6 +20,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const captureFirstCheckbox = document.getElementById('captureFirstCheckbox');
   const createPdfCheckbox    = document.getElementById('createPdfCheckbox');
   const captureModeGroup     = document.getElementById('captureModeGroup');
+  const modeStatus           = document.getElementById('modeStatus');
   const zoomMultiplierGroup  = document.getElementById('zoomMultiplierGroup');
   const btnSave     = document.getElementById('btnSave');
   const btnDelete   = document.getElementById('btnDelete');
@@ -230,7 +231,7 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   // ── Capture mode ──────────────────────────────────────
-  captureModeGroup.querySelectorAll('.segment-btn').forEach((btn) => {
+  captureModeGroup.querySelectorAll('.area-btn').forEach((btn) => {
     btn.addEventListener('click', () => {
       const mode = btn.dataset.mode;
       chrome.runtime.sendMessage({ command: 'updateCaptureMode', captureMode: mode }, (response) => {
@@ -290,9 +291,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Capture mode
     const captureMode = state.captureMode || 'single';
-    captureModeGroup.querySelectorAll('.segment-btn').forEach((btn) => {
+    captureModeGroup.querySelectorAll('.area-btn').forEach((btn) => {
       btn.classList.toggle('active', btn.dataset.mode === captureMode);
     });
+    const modeLabelKey = { single: 'modeSingle', scroll: 'modeScroll', zoom: 'modeZoom' }[captureMode];
+    modeStatus.textContent = t(modeLabelKey);
     zoomMultiplierGroup.style.display = captureMode === 'zoom' ? 'flex' : 'none';
 
     const zoomMultiplier = state.zoomMultiplier || 2;
