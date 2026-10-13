@@ -12,12 +12,20 @@ let state = {
   savedRecordings: {},
   activeRecordingName: '',
   createPdf: true,
-  captureMode: 'single', // 'single' | 'zoom_grid'
-  zoomMultiplier: 2       // 2 | 3 | 4 -- quality multiplier for zoom_grid mode
+  captureMode: 'single', // 'single' | 'scroll' | 'zoom'
+  zoomMultiplier: 2       // 2 | 3 | 4 -- resolution multiplier for zoom mode
 };
 
-const MAX_CANVAS_DIM = 16000; // stay under the ~16384/32768px canvas ceiling in both browsers
-const ZOOM_SETTLE_DELAY = 300; // ms to let layout/zoom settle before each grid tile capture
+const ZOOM_ATTACH_SETTLE_DELAY = 300; // ms for the page to repaint after the debugger bar appears
+const ZOOM_TILE_PX = 4096; // max output px per side of one zoom screenshot tile
+const MAX_ZOOM_DIM = 32000; // max zoom output px per side (canvas dimension limit is 32767)
+const MAX_ZOOM_AREA = 64000000; // max zoom output px, keeps canvas memory ~256MB
+const SCROLL_SETTLE_DELAY = 250; // ms to let lazy content/repaints settle after each scroll step
+const MAX_STRIP_HEIGHT = 32000; // px per stitched strip file (canvas dimension limit is 32767)
+const MAX_STRIP_AREA = 64000000; // px per stitched strip file, keeps canvas memory ~256MB
+const MAX_STRIP_TILES = 200; // safety stop for infinite feeds that keep growing
+const CAPTURE_MIN_INTERVAL = 550; // captureVisibleTab is capped at 2 calls/sec
+const PDF_MAX_PAGE_DIM = 14400; // PDF spec limit for a page side, in points
 
 chrome.storage.local.get(['savedRecordings'], (result) => {
   if (result.savedRecordings) {
@@ -256,8 +264,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 });
 
 async function performCapture(tabs, tabId, prefix) {
-  if (state.captureMode === 'zoom_grid') {
-    await captureZoomGrid(tabs, tabId, prefix);
+  if (state.captureMode === 'zoom') {
+    await captureZoom(tabs, tabId, prefix);
+  } else if (state.captureMode === 'scroll') {
+    await captureScrollStrip(tabs, tabId, prefix);
   } else {
     await captureScreenshot(tabs, tabId, prefix);
   }
@@ -281,215 +291,262 @@ async function captureScreenshot(tabs, tabId, prefix) {
   await saveCapture(dataUrl, prefix);
 }
 
-// ── Zoom Grid Capture ──────────────────────────────────────────────────
-// Boosts effective devicePixelRatio via chrome.tabs.setZoom, and compensates
-// by growing the physical window by the same factor so the CSS layout
-// viewport (and therefore responsive breakpoints) stays unchanged.
-async function enterZoomGridMode(windowId, tabId, multiplier, screenInfo) {
-  const win = await chrome.windows.get(windowId);
-  const original = { width: win.width, height: win.height, left: win.left, top: win.top };
+// Rate-limited captureVisibleTab: multi-tile modes fire many captures in a
+// row and Chrome rejects anything faster than 2/sec.
+let lastCaptureAt = 0;
+async function captureTab(windowId) {
+  for (let attempt = 0; ; attempt++) {
+    const wait = lastCaptureAt + CAPTURE_MIN_INTERVAL - Date.now();
+    if (wait > 0) await sleep(wait);
+    lastCaptureAt = Date.now();
+    try {
+      return await chrome.tabs.captureVisibleTab(windowId, { format: 'png' });
+    } catch (err) {
+      const rateLimited = /MAX_CAPTURE_VISIBLE_TAB_CALLS_PER_SECOND/.test(String(err && err.message));
+      if (!rateLimited || attempt >= 3) throw err;
+    }
+  }
+}
 
-  // chrome.windows.update REJECTS bounds that would leave more than half the
-  // window off-screen -- it does not silently clamp. Clamp to the actual
-  // available screen space ourselves and anchor the window inside it.
-  const maxWidth = screenInfo ? screenInfo.availWidth : original.width;
-  const maxHeight = screenInfo ? screenInfo.availHeight : original.height;
-  const targetLeft = screenInfo ? screenInfo.availLeft : original.left;
-  const targetTop = screenInfo ? screenInfo.availTop : original.top;
+// ── Scroll Strip Capture ───────────────────────────────────────────────
+// Scrolls the page (or the scrollable panel under the selected area) one
+// region-height at a time and stitches every step into one continuous image.
+// Each step crops from the position the scroller actually reached, so the
+// last step (which can't scroll a full height) contributes only new rows.
+async function captureScrollStrip(tabs, tabId, prefix) {
+  const windowId = tabs[0].windowId;
 
-  const targetWidth = Math.min(Math.round(original.width * multiplier), maxWidth);
-  const targetHeight = Math.min(Math.round(original.height * multiplier), maxHeight);
+  await chrome.scripting.executeScript({ target: { tabId }, files: ['content.js'] }).catch(() => {});
+  await chrome.tabs.sendMessage(tabId, { command: 'hideRect' }).catch(() => {});
 
-  let updated;
-  try {
-    updated = await chrome.windows.update(windowId, {
-      left: targetLeft,
-      top: targetTop,
-      width: targetWidth,
-      height: targetHeight
-    });
-  } catch (err) {
-    // Last-resort fallback: proceed without resizing/zooming rather than aborting.
-    console.error('CheeseIt: zoom grid window resize failed, continuing at native resolution:', err);
-    return { original, effectiveMultiplier: 1 };
+  const plan = await chrome.tabs.sendMessage(tabId, { command: 'beginScrollStrip', rect: state.captureRect });
+  const region = plan.region;
+  const step = Math.floor(region.height);
+  if (step < 1 || region.width < 1) {
+    throw new Error('Scroll capture aborted: the capture area is empty.');
   }
 
-  const widthRatio = updated.width / original.width;
-  const heightRatio = updated.height / original.height;
-  const effectiveMultiplier = Math.max(1, Math.min(multiplier, widthRatio, heightRatio));
-
-  await chrome.tabs.setZoom(tabId, effectiveMultiplier);
-
-  return { original, effectiveMultiplier };
-}
-
-async function exitZoomGridMode(windowId, tabId, original) {
-  await chrome.tabs.setZoom(tabId, 0).catch(() => {}); // 0 = reset to the tab's default zoom
-  await chrome.windows.update(windowId, {
-    width: original.width,
-    height: original.height,
-    left: original.left,
-    top: original.top
-  }).catch(() => {});
-}
-
-async function captureZoomGrid(tabs, tabId, prefix) {
-  const windowId = tabs[0].windowId;
-  const requestedMultiplier = state.zoomMultiplier || 2;
-
-  // content.js is only injected on record/select-area, not declaratively --
-  // make sure it's present before relying on it for grid metrics/scrolling.
-  await chrome.scripting.executeScript({ target: { tabId }, files: ['content.js'] }).catch(() => {});
-
-  const before = await chrome.tabs.sendMessage(tabId, { command: 'getLayoutFingerprint' }).catch(() => null);
-  const screenInfo = await chrome.tabs.sendMessage(tabId, { command: 'getScreenInfo' }).catch(() => null);
-  const { original } = await enterZoomGridMode(windowId, tabId, requestedMultiplier, screenInfo);
+  let writer = null;
 
   try {
-    await sleep(ZOOM_SETTLE_DELAY);
-
-    if (before) {
-      const after = await chrome.tabs.sendMessage(tabId, { command: 'getLayoutFingerprint' }).catch(() => null);
-      if (after && (after.innerWidth !== before.innerWidth || after.innerHeight !== before.innerHeight)) {
-        throw new Error('Zoom Grid capture aborted: page layout changed at this quality level (window could not grow enough to compensate). Try a lower multiplier.');
+    let target = 0;
+    for (let i = 0; i < MAX_STRIP_TILES && state.isPlaying; i++) {
+      const { actual, maxScroll } = await chrome.tabs.sendMessage(tabId, { command: 'scrollStripTo', y: target });
+      if (i > 0) {
+        // Fixed headers/footers/floating buttons would otherwise repeat on every step
+        await chrome.tabs.sendMessage(tabId, { command: 'suppressStickyElements', enable: true }).catch(() => {});
       }
+      await sleep(SCROLL_SETTLE_DELAY);
+
+      const bitmap = await dataUrlToBitmap(await captureTab(windowId));
+      // Derive the CSS->pixel scale from the capture itself, per axis
+      const scaleX = bitmap.width / plan.innerWidth;
+      const scaleY = bitmap.height / plan.innerHeight;
+
+      // Rows already captured by the previous step sit at the top of the
+      // region when the scroller couldn't reach `target`. Positions are rounded
+      // in absolute strip coordinates so fractional DPRs never leave a seam.
+      const skip = target - actual;
+      if (skip >= region.height) break;
+      const stripTop = Math.round(target * scaleY);
+      const stripBottom = Math.round((actual + region.height) * scaleY);
+      const sx = Math.round(region.x * scaleX);
+      const sy = Math.round((region.y + skip) * scaleY);
+      const sw = Math.round(region.width * scaleX);
+      const sh = Math.min(stripBottom - stripTop, bitmap.height - sy);
+      if (sh <= 0) break;
+
+      if (!writer) writer = new StripWriter(prefix, sw);
+      const remaining = Math.round((maxScroll + region.height) * scaleY) - stripTop;
+      await writer.add(bitmap, sx, sy, sh, remaining);
+
+      if (actual >= maxScroll - 0.5) break; // reached the end
+      target += step;
+    }
+
+    if (writer) await writer.finish();
+  } finally {
+    await chrome.tabs.sendMessage(tabId, { command: 'endScrollStrip' }).catch(() => {});
+    if (state.captureRect) {
+      await chrome.tabs.sendMessage(tabId, { command: 'showRect' }).catch(() => {});
+    }
+  }
+}
+
+// Draws strip tiles straight into a canvas as they arrive. When the strip
+// outgrows canvas limits it is saved as consecutive _partN files that line up
+// edge to edge with no overlap.
+class StripWriter {
+  constructor(prefix, width) {
+    this.prefix = prefix;
+    this.width = width;
+    this.number = ++captureCount;
+    this.parts = 0;
+    this.canvas = null;
+    this.ctx = null;
+    this.y = 0;
+    this.partLimit = Math.max(1, Math.min(MAX_STRIP_HEIGHT, Math.floor(MAX_STRIP_AREA / width)));
+  }
+
+  async add(bitmap, sx, sy, sh, remainingEstimate) {
+    if (this.canvas && this.y + sh > this.canvas.height) {
+      await this.flush(false);
+    }
+    if (!this.canvas) {
+      // Size to the expected remaining height plus one tile of slack for
+      // rounding; flush() trims any excess, and a new part starts only if the
+      // page genuinely grows past it (lazy loading).
+      const height = Math.min(this.partLimit, remainingEstimate + sh);
+      this.canvas = new OffscreenCanvas(this.width, height);
+      this.ctx = this.canvas.getContext('2d');
+      this.y = 0;
+    }
+    this.ctx.drawImage(bitmap, sx, sy, this.width, sh, 0, this.y, this.width, sh);
+    this.y += sh;
+  }
+
+  async flush(isFinal) {
+    if (!this.canvas || this.y === 0) return;
+    let out = this.canvas;
+    if (this.y < out.height) {
+      out = new OffscreenCanvas(this.width, this.y);
+      out.getContext('2d').drawImage(this.canvas, 0, 0);
+    }
+    const dataUrl = await blobToDataUrl(await out.convertToBlob({ type: 'image/png' }));
+    const suffix = isFinal && this.parts === 0 ? '' : `_part${++this.parts}`;
+    await saveCapture(dataUrl, this.prefix, { number: this.number, suffix });
+    this.canvas = null;
+    this.ctx = null;
+    this.y = 0;
+  }
+
+  async finish() {
+    await this.flush(true);
+  }
+}
+
+// ── Zoom Capture ───────────────────────────────────────────────────────
+// Re-renders the same visible area (viewport or selection) at N× resolution
+// through the DevTools protocol. Unlike page zoom this never changes the
+// layout, window size or what the user sees -- the renderer simply rasterizes
+// the clip at a higher scale. Large outputs are rendered tile by tile and
+// stitched, since the renderer has its own per-screenshot size limits.
+async function captureZoom(tabs, tabId, prefix) {
+  const target = { tabId };
+  const tabBefore = await chrome.tabs.get(tabId);
+  let attachedHere = false;
+  let overridden = false;
+  try {
+    await chrome.debugger.attach(target, '1.3');
+    attachedHere = true;
+  } catch (err) {
+    // Already attached (macro playback / area selection) -- reuse that session
+  }
+
+  try {
+    if (attachedHere) {
+      // A fresh attach slides in Chrome's "is debugging this browser" bar,
+      // which shrinks the page. Pin the layout to the pre-attach size so the
+      // zoomed image covers exactly what a Standard capture would (incl. fixed
+      // footers), then let it repaint -- earlier screenshots return stale tiles.
+      const zoom = await chrome.tabs.getZoom(tabId);
+      await chrome.debugger.sendCommand(target, 'Emulation.setDeviceMetricsOverride', {
+        width: Math.round(tabBefore.width / zoom),
+        height: Math.round(tabBefore.height / zoom),
+        deviceScaleFactor: 0,
+        mobile: false
+      });
+      overridden = true;
+      await sleep(ZOOM_ATTACH_SETTLE_DELAY);
     }
 
     if (state.captureRect) {
-      await captureZoomGridSelection(tabs, tabId, prefix);
-    } else {
-      await captureZoomGridFullPage(tabs, tabId, prefix);
+      await chrome.tabs.sendMessage(tabId, { command: 'hideRect' }).catch(() => {});
+      await sleep(100);
     }
+
+    const metrics = await chrome.debugger.sendCommand(target, 'Page.getLayoutMetrics');
+    const vv = metrics.cssVisualViewport;
+    // visualViewport is in device px, cssVisualViewport in CSS px
+    const dpr = (metrics.visualViewport && metrics.visualViewport.clientWidth / vv.clientWidth) || 1;
+
+    // Viewport-relative CSS region; clientWidth/Height exclude scrollbars
+    const viewportRegion = { x: 0, y: 0, width: vv.clientWidth, height: vv.clientHeight };
+    const region = state.captureRect ? intersectRect(viewportRegion, state.captureRect) : viewportRegion;
+    if (region.width < 1 || region.height < 1) {
+      throw new Error('Zoom capture aborted: the capture area is empty.');
+    }
+
+    // Output px per CSS px. Capped so the stitched image stays within canvas limits.
+    let multiplier = state.zoomMultiplier || 2;
+    const maxScale = Math.min(
+      MAX_ZOOM_DIM / region.width,
+      MAX_ZOOM_DIM / region.height,
+      Math.sqrt(MAX_ZOOM_AREA / (region.width * region.height))
+    ) / dpr;
+    if (multiplier > maxScale) {
+      console.warn(`CheeseIt: zoom ${multiplier}x exceeds canvas limits for this area, using ${maxScale.toFixed(2)}x`);
+      multiplier = Math.max(1, maxScale);
+    }
+    const scale = multiplier * dpr;
+    const outW = Math.round(region.width * scale);
+    const outH = Math.round(region.height * scale);
+
+    // Tile in CSS px, placed by rounding absolute positions so tiles meet exactly
+    const tileCss = Math.max(1, Math.floor(ZOOM_TILE_PX / scale));
+    const canvas = new OffscreenCanvas(outW, outH);
+    const ctx = canvas.getContext('2d');
+
+    for (let ty = 0; ty < region.height; ty += tileCss) {
+      const th = Math.min(tileCss, region.height - ty);
+      for (let tx = 0; tx < region.width; tx += tileCss) {
+        const tw = Math.min(tileCss, region.width - tx);
+        const shot = await chrome.debugger.sendCommand(target, 'Page.captureScreenshot', {
+          format: 'png',
+          // clip is in document coordinates, so offset by the scroll position
+          clip: {
+            x: vv.pageX + region.x + tx,
+            y: vv.pageY + region.y + ty,
+            width: tw,
+            height: th,
+            scale: multiplier
+          }
+        });
+        const bitmap = await dataUrlToBitmap('data:image/png;base64,' + shot.data);
+        const dx = Math.round(tx * scale);
+        const dy = Math.round(ty * scale);
+        const dw = Math.round((tx + tw) * scale) - dx;
+        const dh = Math.round((ty + th) * scale) - dy;
+        ctx.drawImage(bitmap, 0, 0, bitmap.width, bitmap.height, dx, dy, dw, dh);
+      }
+    }
+
+    const dataUrl = await blobToDataUrl(await canvas.convertToBlob({ type: 'image/png' }));
+    await saveCapture(dataUrl, prefix);
   } finally {
-    await exitZoomGridMode(windowId, tabId, original);
-  }
-}
-
-// captureRect is drawn within a single viewport, so no scrolling/tiling is
-// needed -- just take one supersampled shot and crop it at the boosted scale.
-async function captureZoomGridSelection(tabs, tabId, prefix) {
-  await chrome.tabs.sendMessage(tabId, { command: 'hideRect' }).catch(() => {});
-  await sleep(100);
-
-  const dataUrl = await chrome.tabs.captureVisibleTab(tabs[0].windowId, { format: 'png' });
-
-  await chrome.tabs.sendMessage(tabId, { command: 'showRect' }).catch(() => {});
-
-  const metrics = await chrome.tabs.sendMessage(tabId, { command: 'getZoomGridMetrics' });
-  const croppedDataUrl = await cropImage(dataUrl, state.captureRect, metrics.devicePixelRatio);
-
-  await saveCapture(croppedDataUrl, prefix);
-}
-
-// Full page: tile a 2D grid of boosted-zoom captures with zero overlap, then
-// stitch rows (and rows-into-one-image) via OffscreenCanvas, falling back to
-// separate files whenever the stitched size would exceed canvas limits.
-async function captureZoomGridFullPage(tabs, tabId, prefix) {
-  const windowId = tabs[0].windowId;
-  const metrics = await chrome.tabs.sendMessage(tabId, { command: 'getZoomGridMetrics' });
-  const dpr = metrics.devicePixelRatio;
-  const tileWcss = metrics.viewportWidth;
-  const tileHcss = metrics.viewportHeight;
-  const totalWcss = metrics.pageWidth;
-  const totalHcss = metrics.pageHeight;
-
-  const cols = Math.max(1, Math.ceil(totalWcss / tileWcss));
-  const rows = Math.max(1, Math.ceil(totalHcss / tileHcss));
-
-  const rowStrips = [];
-  let anyRowFellBack = false;
-
-  try {
-    for (let r = 0; r < rows; r++) {
-      const yCss = r * tileHcss;
-      const remHcss = totalHcss - yCss;
-      const cropTopPx = remHcss < tileHcss ? Math.round((tileHcss - remHcss) * dpr) : 0;
-
-      const tileBitmaps = [];
-
-      for (let c = 0; c < cols; c++) {
-        const xCss = c * tileWcss;
-        const remWcss = totalWcss - xCss;
-        const cropLeftPx = remWcss < tileWcss ? Math.round((tileWcss - remWcss) * dpr) : 0;
-
-        await chrome.tabs.sendMessage(tabId, { command: 'scrollToGridPosition', x: xCss, y: yCss });
-        if (r > 0 || c > 0) {
-          await chrome.tabs.sendMessage(tabId, { command: 'suppressStickyElements', enable: true }).catch(() => {});
-        }
-        await sleep(ZOOM_SETTLE_DELAY);
-
-        const dataUrl = await chrome.tabs.captureVisibleTab(windowId, { format: 'png' });
-        let bitmap = await dataUrlToBitmap(dataUrl);
-
-        if (cropLeftPx > 0 || cropTopPx > 0) {
-          bitmap = await cropBitmap(bitmap, cropLeftPx, cropTopPx);
-        }
-        tileBitmaps.push(bitmap);
-      }
-
-      const rowWidthPx = tileBitmaps.reduce((sum, b) => sum + b.width, 0);
-      const rowHeightPx = tileBitmaps[0].height;
-
-      if (rowWidthPx > MAX_CANVAS_DIM) {
-        anyRowFellBack = true;
-        for (let c = 0; c < tileBitmaps.length; c++) {
-          const tileDataUrl = await bitmapToDataUrl(tileBitmaps[c]);
-          await downloadNumbered(tileDataUrl, prefix, `_r${r + 1}c${c + 1}`);
-        }
-        rowStrips.push(null);
-        continue;
-      }
-
-      const rowCanvas = new OffscreenCanvas(rowWidthPx, rowHeightPx);
-      const rowCtx = rowCanvas.getContext('2d');
-      let xOffset = 0;
-      for (const bitmap of tileBitmaps) {
-        rowCtx.drawImage(bitmap, xOffset, 0);
-        xOffset += bitmap.width;
-      }
-      rowStrips.push({ bitmap: await createImageBitmap(rowCanvas), width: rowWidthPx, height: rowHeightPx });
+    if (state.captureRect) {
+      await chrome.tabs.sendMessage(tabId, { command: 'showRect' }).catch(() => {});
     }
-  } finally {
-    await chrome.tabs.sendMessage(tabId, { command: 'suppressStickyElements', enable: false }).catch(() => {});
-    await chrome.tabs.sendMessage(tabId, { command: 'scrollToGridPosition', x: 0, y: 0 }).catch(() => {});
-  }
-
-  if (anyRowFellBack) return; // tiles for oversized rows already saved individually above
-
-  const totalHeightPx = rowStrips.reduce((sum, row) => sum + row.height, 0);
-
-  if (totalHeightPx > MAX_CANVAS_DIM) {
-    for (let i = 0; i < rowStrips.length; i++) {
-      const rowDataUrl = await bitmapToDataUrl(rowStrips[i].bitmap);
-      await downloadNumbered(rowDataUrl, prefix, `_row${i + 1}`);
+    if (overridden) {
+      await chrome.debugger.sendCommand(target, 'Emulation.clearDeviceMetricsOverride').catch(() => {});
     }
-    return;
+    if (attachedHere) {
+      await chrome.debugger.detach(target).catch(() => {});
+    }
   }
-
-  const finalCanvas = new OffscreenCanvas(rowStrips[0].width, totalHeightPx);
-  const finalCtx = finalCanvas.getContext('2d');
-  let yOffset = 0;
-  for (const row of rowStrips) {
-    finalCtx.drawImage(row.bitmap, 0, yOffset);
-    yOffset += row.height;
-  }
-
-  const finalBlob = await finalCanvas.convertToBlob({ type: 'image/png' });
-  const finalDataUrl = await blobToDataUrl(finalBlob);
-
-  await saveCapture(finalDataUrl, prefix);
 }
 
-async function downloadNumbered(dataUrl, prefix, suffix) {
-  captureCount++;
-  const filename = `${prefix}_${captureCount.toString().padStart(3, '0')}${suffix}.png`;
-  const filePath = currentSubfolder ? `${currentSubfolder}/${filename}` : filename;
-  await chrome.downloads.download({ url: dataUrl, filename: filePath, saveAs: false });
+function intersectRect(a, b) {
+  const x = Math.max(a.x, b.x);
+  const y = Math.max(a.y, b.y);
+  const right = Math.min(a.x + a.width, b.x + b.width);
+  const bottom = Math.min(a.y + a.height, b.y + b.height);
+  return { x, y, width: Math.max(0, right - x), height: Math.max(0, bottom - y) };
 }
 
-async function saveCapture(dataUrl, prefix) {
-  captureCount++;
-  const filename = `${prefix}_${captureCount.toString().padStart(3, '0')}.png`;
+async function saveCapture(dataUrl, prefix, { number, suffix = '' } = {}) {
+  if (number === undefined) number = ++captureCount;
+  const filename = `${prefix}_${number.toString().padStart(3, '0')}${suffix}.png`;
   const filePath = currentSubfolder ? `${currentSubfolder}/${filename}` : filename;
 
   await chrome.downloads.download({
@@ -522,27 +579,10 @@ async function blobToDataUrl(blob) {
   });
 }
 
-async function bitmapToDataUrl(bitmap) {
-  const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
-  const ctx = canvas.getContext('2d');
-  ctx.drawImage(bitmap, 0, 0);
-  const blob = await canvas.convertToBlob({ type: 'image/png' });
-  return await blobToDataUrl(blob);
-}
-
-async function cropBitmap(bitmap, cropLeftPx, cropTopPx) {
-  const w = bitmap.width - cropLeftPx;
-  const h = bitmap.height - cropTopPx;
-  const canvas = new OffscreenCanvas(w, h);
-  const ctx = canvas.getContext('2d');
-  ctx.drawImage(bitmap, cropLeftPx, cropTopPx, w, h, 0, 0, w, h);
-  return await createImageBitmap(canvas);
-}
-
-async function cropImage(dataUrl, rect, dprOverride) {
+async function cropImage(dataUrl, rect) {
   const bitmap = await dataUrlToBitmap(dataUrl);
 
-  const dpr = dprOverride || rect.devicePixelRatio || 1;
+  const dpr = rect.devicePixelRatio || 1;
   const targetX = Math.round(rect.x * dpr);
   const targetY = Math.round(rect.y * dpr);
   const targetWidth = Math.round(rect.width * dpr);
@@ -805,14 +845,13 @@ async function generateAndDownloadPdf(captures, prefix, subfolder) {
       const pngBytes = Uint8Array.from(atob(base64Data), c => c.charCodeAt(0));
       const pngImage = await pdfDoc.embedPng(pngBytes);
 
-      // Create a page exactly the same size as the image (1pt = 1px)
-      const page = pdfDoc.addPage([capture.width, capture.height]);
-      page.drawImage(pngImage, {
-        x: 0,
-        y: 0,
-        width: capture.width,
-        height: capture.height
-      });
+      // Create a page exactly the same size as the image (1pt = 1px), scaled
+      // down only when a long strip exceeds the PDF page size limit (14400pt)
+      const fit = Math.min(1, PDF_MAX_PAGE_DIM / Math.max(capture.width, capture.height));
+      const width = capture.width * fit;
+      const height = capture.height * fit;
+      const page = pdfDoc.addPage([width, height]);
+      page.drawImage(pngImage, { x: 0, y: 0, width, height });
     }
 
     const pdfBytes = await pdfDoc.save();

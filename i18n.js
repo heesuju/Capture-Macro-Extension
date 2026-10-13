@@ -35,7 +35,8 @@ const I18N = {
     createPdfLabel: 'Create PDF after capture',
     captureModeLabel: 'Capture Mode',
     modeSingle: 'Standard',
-    modeZoomGrid: 'Zoom Grid'
+    modeScroll: 'Scroll',
+    modeZoom: 'Zoom'
   },
   ko: {
     appTitle: 'CheeseIt',
@@ -72,6 +73,7 @@ const I18N = {
     createPdfLabel: '캡처 후 PDF 생성',
     captureModeLabel: '캡처 모드',
     modeSingle: '표준',
-    modeZoomGrid: '줌 그리드'
+    modeScroll: '스크롤',
+    modeZoom: '줌'
   }
 };
