@@ -13,6 +13,11 @@ let state = {
   savedRecordings: {},
   activeRecordingName: '',
   createPdf: true,
+  skipDuplicates: true,   // don't save a capture identical to the previous one
+  autoStopUnchanged: true, // end a macro run once the page stops changing
+  maxCaptures: 0,         // end a macro run after this many saved captures (0 = no limit)
+  runSaved: 0,            // captures saved in the current run
+  runSkipped: 0,          // duplicate captures skipped in the current run
   captureMode: 'single', // 'single' | 'scroll' | 'zoom'
   zoomMultiplier: 2       // 2 | 3 | 4 -- resolution multiplier for zoom mode
 };
@@ -105,6 +110,7 @@ async function updateStatusIcon() {
 
 function broadcastState() {
   updateStatusIcon().catch(() => {});
+  updateActionTitle();
   chrome.runtime.sendMessage({ type: 'STATE_UPDATE', state }).catch(() => {});
 }
 
@@ -247,6 +253,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   } else if (message.command === 'updateCreatePdf') {
     state.createPdf = message.createPdf;
     sendResponse(state);
+  } else if (message.command === 'updateOption') {
+    if (['skipDuplicates', 'autoStopUnchanged', 'maxCaptures'].includes(message.key)) {
+      state[message.key] = message.value;
+    }
+    sendResponse(state);
   } else if (message.command === 'updateCaptureMode') {
     state.captureMode = message.captureMode;
     broadcastState();
@@ -299,16 +310,201 @@ async function performCapture(tabs, tabId, prefix) {
   // the capture itself, so a macro that clicks a link still navigates freely.
   await chrome.scripting.executeScript({ target: { tabId }, files: ['content.js'] }).catch(() => {});
   await chrome.tabs.sendMessage(tabId, { command: 'setLeaveGuard', enable: true }).catch(() => {});
+  let images;
   try {
     if (state.captureMode === 'zoom') {
-      await captureZoom(tabs, tabId, prefix);
+      images = await captureZoom(tabs, tabId);
     } else if (state.captureMode === 'scroll') {
-      await captureScrollStrip(tabs, tabId, prefix);
+      images = await captureScrollStrip(tabs, tabId);
     } else {
-      await captureScreenshot(tabs, tabId, prefix);
+      images = await captureScreenshot(tabs, tabId);
     }
   } finally {
     await chrome.tabs.sendMessage(tabId, { command: 'setLeaveGuard', enable: false }).catch(() => {});
+  }
+  if (images && images.length > 0) await recordCapture(images, prefix);
+}
+
+// ── Saving, duplicates & counters ─────────────────────────────────────
+// Every mode returns its images ([{ dataUrl, suffix }], several only for a
+// Long capture split into parts). Each capture is compared with the previous
+// one on a downscaled copy: any visible change (even a page number) counts as
+// changed, while sub-pixel noise like a blinking caret averages away.
+const SIGNATURE_WIDTH = 512;           // px width of the comparison thumbnail
+const SIGNATURE_MAX_PIXELS = 4000000;  // cap for very long strips
+const SIGNATURE_CHANNEL_DIFF = 32;     // per-channel difference that counts as a changed pixel
+const SIGNATURE_MAX_CHANGED = 2;       // changed pixels tolerated as noise
+const UNCHANGED_STOP_COUNT = 2;        // unchanged captures in a row before auto-stop
+
+let lastSignature = null;
+let unchangedStreak = 0;
+
+function resetRunCounters() {
+  captureCount = 0;
+  state.runSaved = 0;
+  state.runSkipped = 0;
+  lastSignature = null;
+  unchangedStreak = 0;
+}
+
+async function recordCapture(images, prefix) {
+  if (state.skipDuplicates || state.autoStopUnchanged) {
+    const signature = await captureSignature(images);
+    const unchanged = lastSignature !== null && signaturesMatch(signature, lastSignature);
+    lastSignature = signature;
+    unchangedStreak = unchanged ? unchangedStreak + 1 : 0;
+    if (unchanged && state.skipDuplicates) {
+      state.runSkipped++;
+      broadcastState();
+      return;
+    }
+  }
+
+  const number = ++captureCount;
+  for (const image of images) {
+    await saveCapture(image.dataUrl, prefix, { number, suffix: image.suffix || '' });
+  }
+  state.runSaved = captureCount;
+  broadcastState();
+}
+
+async function captureSignature(images) {
+  const signature = [];
+  for (const { dataUrl } of images) {
+    const bitmap = await dataUrlToBitmap(dataUrl);
+    const scale = Math.min(1, SIGNATURE_WIDTH / bitmap.width,
+      Math.sqrt(SIGNATURE_MAX_PIXELS / (bitmap.width * bitmap.height)));
+    const w = Math.max(1, Math.round(bitmap.width * scale));
+    const h = Math.max(1, Math.round(bitmap.height * scale));
+    const ctx = new OffscreenCanvas(w, h).getContext('2d');
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(bitmap, 0, 0, w, h);
+    signature.push({ w, h, data: ctx.getImageData(0, 0, w, h).data });
+  }
+  return signature;
+}
+
+function signaturesMatch(a, b) {
+  if (a.length !== b.length) return false;
+  let changed = 0;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i].w !== b[i].w || a[i].h !== b[i].h) return false;
+    const da = a[i].data;
+    const db = b[i].data;
+    for (let p = 0; p < da.length; p += 4) {
+      if (Math.abs(da[p] - db[p]) > SIGNATURE_CHANNEL_DIFF ||
+          Math.abs(da[p + 1] - db[p + 1]) > SIGNATURE_CHANNEL_DIFF ||
+          Math.abs(da[p + 2] - db[p + 2]) > SIGNATURE_CHANNEL_DIFF) {
+        if (++changed > SIGNATURE_MAX_CHANGED) return false;
+      }
+    }
+  }
+  return true;
+}
+
+// Ends a macro run when it has nothing left to capture. Returns true if stopped.
+function checkAutoStop() {
+  let reason = null;
+  if (state.autoStopUnchanged && unchangedStreak >= UNCHANGED_STOP_COUNT) {
+    reason = 'unchanged';
+  } else if (state.maxCaptures > 0 && captureCount >= state.maxCaptures) {
+    reason = 'max';
+  }
+  if (!reason) return false;
+  state.isPlaying = false;
+  showFinishedNotification(reason);
+  return true;
+}
+
+async function getStrings() {
+  const { settings } = await chrome.storage.local.get('settings');
+  return I18N[(settings && settings.language) || 'en'] || I18N.en;
+}
+
+async function showFinishedNotification(reason) {
+  const strings = await getStrings();
+  const message = (reason === 'max' ? strings.finishedMax : strings.finishedUnchanged)
+    .replace('{n}', state.runSaved);
+  chrome.notifications.create('capture-finished', {
+    type: 'basic',
+    iconUrl: DEFAULT_ICON[128],
+    title: strings.finishedNotifyTitle,
+    message
+  }).catch(() => {});
+}
+
+// Hover text of the toolbar icon, e.g. "Cheezing: 12 saved · 2 skipped"
+async function updateActionTitle() {
+  const strings = await getStrings();
+  let title = strings.appTitle;
+  if (state.isPlaying) {
+    title += ': ' + strings.countSaved.replace('{n}', state.runSaved);
+    if (state.runSkipped > 0) title += ' · ' + strings.countSkipped.replace('{n}', state.runSkipped);
+  }
+  chrome.action.setTitle({ title }).catch(() => {});
+}
+
+// ── Page settle ────────────────────────────────────────────────────────
+// After macro actions, capture only once the page has finished reacting:
+// tab loaded, no network requests in flight, no DOM changes, and images and
+// fonts in view loaded -- each quiet for SETTLE_QUIET ms. Network activity is
+// observed through the debugger session macro playback already holds.
+const SETTLE_MIN_DELAY = 300;   // let click handlers start their work first
+const SETTLE_QUIET = 500;       // ms every signal must stay quiet
+const SETTLE_TIMEOUT = 5000;    // give up and capture anyway (e.g. live tickers)
+const SETTLE_POLL_INTERVAL = 150;
+const LONG_REQUEST_MS = 5000;   // ignore long-polls/streams older than this
+
+const inflightRequests = new Map(); // requestId -> start time, for the playback tab
+let lastNetworkActivity = 0;
+let networkTabId = null;
+
+chrome.debugger.onEvent.addListener((source, method, params) => {
+  if (source.tabId !== networkTabId) return;
+  if (method === 'Network.requestWillBeSent') {
+    if (params.type === 'EventSource' || params.type === 'WebSocket') return;
+    inflightRequests.set(params.requestId, Date.now());
+    lastNetworkActivity = Date.now();
+  } else if (method === 'Network.loadingFinished' || method === 'Network.loadingFailed') {
+    if (inflightRequests.delete(params.requestId)) lastNetworkActivity = Date.now();
+  }
+});
+
+async function startNetworkTracking(target) {
+  inflightRequests.clear();
+  lastNetworkActivity = 0;
+  networkTabId = target.tabId;
+  await chrome.debugger.sendCommand(target, 'Network.enable').catch(() => { networkTabId = null; });
+}
+
+function msSinceNetworkActivity() {
+  const now = Date.now();
+  for (const [id, startedAt] of inflightRequests) {
+    if (now - startedAt > LONG_REQUEST_MS) inflightRequests.delete(id);
+    else return 0;
+  }
+  return now - lastNetworkActivity;
+}
+
+async function waitForPageSettle(tabId) {
+  const start = Date.now();
+  await sleep(SETTLE_MIN_DELAY);
+  while (state.isPlaying && Date.now() - start < SETTLE_TIMEOUT) {
+    const tab = await chrome.tabs.get(tabId).catch(() => null);
+    if (!tab) return;
+    if (tab.status === 'complete') {
+      // Re-injected in case the macro navigated to a new page
+      await chrome.scripting.executeScript({ target: { tabId }, files: ['content.js'] }).catch(() => {});
+      const activity = await chrome.tabs.sendMessage(tabId, { command: 'getPageActivity' }).catch(() => null);
+      if (activity &&
+          activity.msSinceMutation >= SETTLE_QUIET &&
+          activity.pendingImages === 0 &&
+          !activity.fontsLoading &&
+          msSinceNetworkActivity() >= SETTLE_QUIET) {
+        return;
+      }
+    }
+    await sleep(SETTLE_POLL_INTERVAL);
   }
 }
 
@@ -380,7 +576,7 @@ chrome.notifications.onClicked.addListener(async (id) => {
   await chrome.tabs.update(tab.id, { active: true }).catch(() => {});
 });
 
-async function captureScreenshot(tabs, tabId, prefix) {
+async function captureScreenshot(tabs, tabId) {
   // Hide rectangle before capturing
   if (state.captureRect) {
     await chrome.tabs.sendMessage(tabId, { command: 'hideRect' }).catch(() => {});
@@ -396,7 +592,7 @@ async function captureScreenshot(tabs, tabId, prefix) {
     dataUrl = await cropImage(dataUrl, state.captureRect);
   }
 
-  await saveCapture(dataUrl, prefix);
+  return [{ dataUrl }];
 }
 
 // Rate-limited captureVisibleTab: multi-tile modes fire many captures in a
@@ -421,7 +617,7 @@ async function captureTab(windowId) {
 // region-height at a time and stitches every step into one continuous image.
 // Each step crops from the position the scroller actually reached, so the
 // last step (which can't scroll a full height) contributes only new rows.
-async function captureScrollStrip(tabs, tabId, prefix) {
+async function captureScrollStrip(tabs, tabId) {
   const windowId = tabs[0].windowId;
 
   await chrome.scripting.executeScript({ target: { tabId }, files: ['content.js'] }).catch(() => {});
@@ -474,7 +670,7 @@ async function captureScrollStrip(tabs, tabId, prefix) {
       const sh = Math.min(tileTop + regionH - from, bitmap.height - sy);
       const isLast = actual >= maxScroll - 0.5;
       if (sh > 0) {
-        if (!writer) writer = new StripWriter(prefix, sw);
+        if (!writer) writer = new StripWriter(sw);
         const remaining = Math.round(maxScroll * scale) + regionH - from;
         await writer.add(bitmap, sx, sy, sh, remaining);
         writtenPx = from + sh;
@@ -484,7 +680,11 @@ async function captureScrollStrip(tabs, tabId, prefix) {
       target += step;
     }
 
-    if (writer) await writer.finish();
+    if (writer) {
+      await writer.finish();
+      return writer.images;
+    }
+    return [];
   } finally {
     await chrome.tabs.sendMessage(tabId, { command: 'endScrollStrip' }).catch(() => {});
     if (state.captureRect) {
@@ -494,13 +694,12 @@ async function captureScrollStrip(tabs, tabId, prefix) {
 }
 
 // Draws strip tiles straight into a canvas as they arrive. When the strip
-// outgrows canvas limits it is saved as consecutive _partN files that line up
-// edge to edge with no overlap.
+// outgrows canvas limits it is split into consecutive _partN images that line
+// up edge to edge with no overlap.
 class StripWriter {
-  constructor(prefix, width) {
-    this.prefix = prefix;
+  constructor(width) {
     this.width = width;
-    this.number = ++captureCount;
+    this.images = [];
     this.parts = 0;
     this.canvas = null;
     this.ctx = null;
@@ -534,7 +733,7 @@ class StripWriter {
     }
     const dataUrl = await blobToDataUrl(await out.convertToBlob({ type: 'image/png' }));
     const suffix = isFinal && this.parts === 0 ? '' : `_part${++this.parts}`;
-    await saveCapture(dataUrl, this.prefix, { number: this.number, suffix });
+    this.images.push({ dataUrl, suffix });
     this.canvas = null;
     this.ctx = null;
     this.y = 0;
@@ -551,7 +750,7 @@ class StripWriter {
 // layout, window size or what the user sees -- the renderer simply rasterizes
 // the clip at a higher scale. Large outputs are rendered tile by tile and
 // stitched, since the renderer has its own per-screenshot size limits.
-async function captureZoom(tabs, tabId, prefix) {
+async function captureZoom(tabs, tabId) {
   const target = { tabId };
   const tabBefore = await chrome.tabs.get(tabId);
   let attachedHere = false;
@@ -645,7 +844,7 @@ async function captureZoom(tabs, tabId, prefix) {
     }
 
     const dataUrl = await blobToDataUrl(await canvas.convertToBlob({ type: 'image/png' }));
-    await saveCapture(dataUrl, prefix);
+    return [{ dataUrl }];
   } finally {
     if (state.captureRect) {
       await chrome.tabs.sendMessage(tabId, { command: 'showRect' }).catch(() => {});
@@ -667,8 +866,7 @@ function intersectRect(a, b) {
   return { x, y, width: Math.max(0, right - x), height: Math.max(0, bottom - y) };
 }
 
-async function saveCapture(dataUrl, prefix, { number, suffix = '' } = {}) {
-  if (number === undefined) number = ++captureCount;
+async function saveCapture(dataUrl, prefix, { number, suffix = '' }) {
   const numbered = number.toString().padStart(3, '0');
   const filename = `${prefix ? `${prefix}_` : ''}${numbered}${suffix}.png`;
   const filePath = currentSubfolder ? `${currentSubfolder}/${filename}` : filename;
@@ -737,7 +935,7 @@ async function takeSingleCapture(prefix) {
 
   const tabs = await chrome.tabs.query({active: true, lastFocusedWindow: true});
   if (tabs.length > 0) {
-    captureCount = 0;
+    resetRunCounters();
     try {
       await performCapture(tabs, tabs[0].id, sessionPrefix);
     } catch (err) {
@@ -778,17 +976,23 @@ async function startPlayback(prefix) {
   } catch (err) {
     console.log('Debugger attach skipped/failed (likely already attached):', err);
   }
+  await startNetworkTracking(target);
 
-  captureCount = 0;
+  resetRunCounters();
+  broadcastState();
 
+  let actionsRan = false;
   while (state.isPlaying) {
     // Capture BEFORE all actions
     if (state.captureFirst) {
+      if (actionsRan) await waitForPageSettle(tabId);
+      if (!state.isPlaying) break;
       try {
         await performCapture(tabs, tabId, sessionPrefix);
       } catch (err) {
         console.error('Cheezing: capture failed:', err);
       }
+      if (checkAutoStop()) break;
     }
 
     for (let i = 0; i < state.actions.length; i++) {
@@ -820,21 +1024,22 @@ async function startPlayback(prefix) {
     }
 
     if (!state.isPlaying) break;
+    actionsRan = state.actions.length > 0;
 
-    // Capture AFTER all actions (wait 1s for page to settle)
+    // Capture AFTER all actions, once the page has settled
     if (!state.captureFirst) {
-      await sleep(1000);
+      await waitForPageSettle(tabId);
       if (!state.isPlaying) break;
       try {
         await performCapture(tabs, tabId, sessionPrefix);
       } catch (err) {
         console.error('Cheezing: capture failed:', err);
       }
+      if (checkAutoStop()) break;
     }
-
-    if (state.isPlaying) await sleep(500);
   }
 
+  networkTabId = null;
   await chrome.debugger.detach(target).catch(() => {});
   await endPlayback();
 }

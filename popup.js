@@ -19,6 +19,9 @@ document.addEventListener('DOMContentLoaded', () => {
   const prefixInput = document.getElementById('prefixInput');
   const captureFirstCheckbox = document.getElementById('captureFirstCheckbox');
   const createPdfCheckbox    = document.getElementById('createPdfCheckbox');
+  const skipDuplicatesCheckbox = document.getElementById('skipDuplicatesCheckbox');
+  const autoStopCheckbox     = document.getElementById('autoStopCheckbox');
+  const maxCapturesInput     = document.getElementById('maxCapturesInput');
   const captureModeGroup     = document.getElementById('captureModeGroup');
   const modeStatus           = document.getElementById('modeStatus');
   const zoomMultiplierGroup  = document.getElementById('zoomMultiplierGroup');
@@ -288,6 +291,15 @@ document.addEventListener('DOMContentLoaded', () => {
     if (document.activeElement !== createPdfCheckbox) {
       createPdfCheckbox.checked = (state.createPdf !== false); // default true
     }
+    if (document.activeElement !== skipDuplicatesCheckbox) {
+      skipDuplicatesCheckbox.checked = state.skipDuplicates !== false;
+    }
+    if (document.activeElement !== autoStopCheckbox) {
+      autoStopCheckbox.checked = state.autoStopUnchanged !== false;
+    }
+    if (document.activeElement !== maxCapturesInput) {
+      maxCapturesInput.value = state.maxCaptures || 0;
+    }
 
     // Capture mode
     const captureMode = state.captureMode || 'single';
@@ -367,7 +379,12 @@ document.addEventListener('DOMContentLoaded', () => {
       btnPlay.disabled = false;
 
     } else if (state.isPlaying) {
-      statusDisplay.textContent = t(state.isPaused ? 'statusPaused' : 'statusPlaying');
+      let statusText = t(state.isPaused ? 'statusPaused' : 'statusPlaying');
+      if (!state.isPaused) {
+        statusText += ' ' + t('countSaved').replace('{n}', state.runSaved || 0);
+        if (state.runSkipped > 0) statusText += ' · ' + t('countSkipped').replace('{n}', state.runSkipped);
+      }
+      statusDisplay.textContent = statusText;
       statusDisplay.className = state.isPaused ? 'status paused' : 'status playing';
       statusDisplay.classList.remove('hidden');
       btnRecord.disabled = true;
@@ -437,6 +454,20 @@ document.addEventListener('DOMContentLoaded', () => {
 
   captureFirstCheckbox.addEventListener('change', () => {
     chrome.runtime.sendMessage({ command: 'updateCaptureFirst', captureFirst: captureFirstCheckbox.checked });
+  });
+
+  skipDuplicatesCheckbox.addEventListener('change', () => {
+    chrome.runtime.sendMessage({ command: 'updateOption', key: 'skipDuplicates', value: skipDuplicatesCheckbox.checked });
+  });
+
+  autoStopCheckbox.addEventListener('change', () => {
+    chrome.runtime.sendMessage({ command: 'updateOption', key: 'autoStopUnchanged', value: autoStopCheckbox.checked });
+  });
+
+  maxCapturesInput.addEventListener('change', () => {
+    const value = Math.max(0, parseInt(maxCapturesInput.value, 10) || 0);
+    maxCapturesInput.value = value;
+    chrome.runtime.sendMessage({ command: 'updateOption', key: 'maxCaptures', value });
   });
 
   createPdfCheckbox.addEventListener('change', () => {

@@ -298,6 +298,51 @@
           </label>
         </div>
 
+        <!-- Skip Duplicates Option -->
+        <div class="setting-group toggle-row">
+          <label class="setting-label" for="skipDuplicatesCheckbox">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="8" y="8" width="13" height="13" rx="2"/>
+              <path d="M4 16V5a1 1 0 0 1 1-1h11"/>
+              <line x1="11" y1="18" x2="18" y2="11"/>
+            </svg>
+            <span data-i18n="skipDuplicatesLabel">Skip duplicate captures</span>
+          </label>
+          <label class="toggle-switch">
+            <input type="checkbox" id="skipDuplicatesCheckbox" checked>
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+
+        <!-- Auto-stop Option -->
+        <div class="setting-group toggle-row">
+          <label class="setting-label" for="autoStopCheckbox">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="9"/>
+              <rect x="9" y="9" width="6" height="6" rx="1"/>
+            </svg>
+            <span data-i18n="autoStopLabel">Stop when the page stops changing</span>
+          </label>
+          <label class="toggle-switch">
+            <input type="checkbox" id="autoStopCheckbox" checked>
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+
+        <!-- Max Captures Option -->
+        <div class="setting-group toggle-row">
+          <label class="setting-label" for="maxCapturesInput">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="4" y1="9" x2="20" y2="9"/>
+              <line x1="4" y1="15" x2="20" y2="15"/>
+              <line x1="10" y1="3" x2="8" y2="21"/>
+              <line x1="16" y1="3" x2="14" y2="21"/>
+            </svg>
+            <span data-i18n="maxCapturesLabel">Max captures (0 = no limit)</span>
+          </label>
+          <input type="number" id="maxCapturesInput" class="number-input" min="0" step="1" value="0">
+        </div>
+
         <!-- Version Info -->
         <div class="settings-footer">
           <span id="appVersion">Cheezing v1.0.0</span>

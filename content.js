@@ -45,6 +45,8 @@
     } else if (message.command === 'suppressStickyElements') {
       suppressStickyElements(message.enable);
       sendResponse({ success: true });
+    } else if (message.command === 'getPageActivity') {
+      sendResponse(getPageActivity());
     } else if (message.command === 'setLeaveGuard') {
       if (message.enable) {
         window.addEventListener('beforeunload', confirmLeave);
@@ -61,6 +63,35 @@
       sendResponse({ success: true });
     }
   });
+
+  // ── Page activity (for waiting until the page settles) ───────────────
+  // Started on first request; the page counts as just-changed at that point
+  // so it must then stay quiet for the full window.
+  let lastMutationAt = 0;
+  let mutationObserver = null;
+
+  function getPageActivity() {
+    if (!mutationObserver) {
+      lastMutationAt = Date.now();
+      mutationObserver = new MutationObserver(() => { lastMutationAt = Date.now(); });
+      mutationObserver.observe(document, { subtree: true, childList: true, attributes: true, characterData: true });
+    }
+    return {
+      msSinceMutation: Date.now() - lastMutationAt,
+      pendingImages: countPendingImagesInView(),
+      fontsLoading: document.fonts ? document.fonts.status === 'loading' : false
+    };
+  }
+
+  function countPendingImagesInView() {
+    let pending = 0;
+    for (const img of document.images) {
+      if (img.complete) continue;
+      const r = img.getBoundingClientRect();
+      if (r.bottom > 0 && r.right > 0 && r.top < window.innerHeight && r.left < window.innerWidth) pending++;
+    }
+    return pending;
+  }
 
   // Shows Chrome's "Leave site?" dialog while a capture is in progress
   function confirmLeave(e) {
