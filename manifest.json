@@ -8,7 +8,8 @@
     "scripting",
     "debugger",
     "downloads",
-    "storage"
+    "storage",
+    "notifications"
   ],
   "host_permissions": [
     "<all_urls>"

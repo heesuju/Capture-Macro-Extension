@@ -45,6 +45,13 @@
     } else if (message.command === 'suppressStickyElements') {
       suppressStickyElements(message.enable);
       sendResponse({ success: true });
+    } else if (message.command === 'setLeaveGuard') {
+      if (message.enable) {
+        window.addEventListener('beforeunload', confirmLeave);
+      } else {
+        window.removeEventListener('beforeunload', confirmLeave);
+      }
+      sendResponse({ success: true });
     } else if (message.command === 'beginScrollStrip') {
       sendResponse(beginScrollStrip(message.rect));
     } else if (message.command === 'scrollStripTo') {
@@ -54,6 +61,12 @@
       sendResponse({ success: true });
     }
   });
+
+  // Shows Chrome's "Leave site?" dialog while a capture is in progress
+  function confirmLeave(e) {
+    e.preventDefault();
+    e.returnValue = '';
+  }
 
   // el -> original inline visibility. Kept as a map so repeated enable calls
   // (one per tile) add newly-appearing elements without recording our own

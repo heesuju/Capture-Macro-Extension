@@ -1,8 +1,9 @@
-importScripts('pdf-lib.min.js');
+importScripts('pdf-lib.min.js', 'i18n.js');
 
 let state = {
   isRecording: false,
   isPlaying: false,
+  isPaused: false, // a capture is waiting for its tab to be visible again
   isSelectingArea: false,
   captureRect: null,
   prefix: '',
@@ -62,14 +63,17 @@ async function getNextRunSubfolder() {
 // badge can't be positioned or shaped). Lens centre/radius are fractions of
 // the icon size, measured from the icon artwork.
 const LENS = { x: 0.504, y: 0.621, r: 0.15 };
-const STATUS_COLORS = { recording: '#e94560', playing: '#4caf50' };
+const STATUS_COLORS = { recording: '#e94560', playing: '#4caf50', paused: '#ff6d00' };
 const STATUS_ICON_SIZES = [16, 32];
 const DEFAULT_ICON = { 16: 'icons/icon_16.png', 32: 'icons/icon_32.png', 48: 'icons/icon_48.png', 128: 'icons/icon_128.png' };
 let iconBitmaps = null;
 let shownStatus = null;
 
 async function updateStatusIcon() {
-  const status = state.isRecording ? 'recording' : state.isPlaying ? 'playing' : null;
+  const status = state.isRecording ? 'recording'
+    : state.isPaused ? 'paused'
+    : state.isPlaying ? 'playing'
+    : null;
   if (status === shownStatus) return;
   shownStatus = status;
 
@@ -291,14 +295,90 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 });
 
 async function performCapture(tabs, tabId, prefix) {
-  if (state.captureMode === 'zoom') {
-    await captureZoom(tabs, tabId, prefix);
-  } else if (state.captureMode === 'scroll') {
-    await captureScrollStrip(tabs, tabId, prefix);
-  } else {
-    await captureScreenshot(tabs, tabId, prefix);
+  // Ask before the tab is closed/reloaded/navigated mid-capture. Only during
+  // the capture itself, so a macro that clicks a link still navigates freely.
+  await chrome.scripting.executeScript({ target: { tabId }, files: ['content.js'] }).catch(() => {});
+  await chrome.tabs.sendMessage(tabId, { command: 'setLeaveGuard', enable: true }).catch(() => {});
+  try {
+    if (state.captureMode === 'zoom') {
+      await captureZoom(tabs, tabId, prefix);
+    } else if (state.captureMode === 'scroll') {
+      await captureScrollStrip(tabs, tabId, prefix);
+    } else {
+      await captureScreenshot(tabs, tabId, prefix);
+    }
+  } finally {
+    await chrome.tabs.sendMessage(tabId, { command: 'setLeaveGuard', enable: false }).catch(() => {});
   }
 }
+
+// ── Capture pause ──────────────────────────────────────────────────────
+// Screenshots need the tab to be the visible tab of a non-minimized window:
+// captureVisibleTab grabs whichever tab is showing, and hidden tabs may stop
+// painting. Extensions can't intercept a tab switch or minimize, so before
+// each screenshot we check, and pause until the tab is back in view.
+const PAUSED_NOTIFICATION_ID = 'capture-paused';
+const PAUSE_POLL_INTERVAL = 500;
+const RESUME_SETTLE_DELAY = 400; // ms for the tab to repaint after coming back
+let pausedTabId = null;
+
+async function isTabCapturable(tabId) {
+  let tab;
+  try {
+    tab = await chrome.tabs.get(tabId);
+  } catch (err) {
+    state.isPlaying = false; // the captured tab was closed -- end the run
+    throw new Error('Capture stopped: the tab was closed.');
+  }
+  const win = await chrome.windows.get(tab.windowId);
+  return tab.active && win.state !== 'minimized';
+}
+
+// Returns false right away if the tab is capturable, or true once it is
+// again after a pause (callers then redo anything the user may have changed,
+// like the scroll position). Throws if stopped or the tab closes meanwhile.
+async function waitUntilCapturable(tabId) {
+  if (await isTabCapturable(tabId)) return false;
+
+  pausedTabId = tabId;
+  state.isPaused = true;
+  broadcastState();
+  showPausedNotification();
+  try {
+    while (!(await isTabCapturable(tabId))) {
+      if (!state.isPlaying) throw new Error('Capture stopped while paused.');
+      await sleep(PAUSE_POLL_INTERVAL);
+    }
+  } finally {
+    pausedTabId = null;
+    state.isPaused = false;
+    broadcastState();
+    chrome.notifications.clear(PAUSED_NOTIFICATION_ID).catch(() => {});
+  }
+  await sleep(RESUME_SETTLE_DELAY);
+  return true;
+}
+
+async function showPausedNotification() {
+  const { settings } = await chrome.storage.local.get('settings');
+  const strings = I18N[(settings && settings.language) || 'en'] || I18N.en;
+  chrome.notifications.create(PAUSED_NOTIFICATION_ID, {
+    type: 'basic',
+    iconUrl: DEFAULT_ICON[128],
+    title: strings.pausedNotifyTitle,
+    message: strings.pausedNotifyMessage,
+    priority: 2
+  }).catch(() => {});
+}
+
+// Clicking the notification brings the captured tab back into view
+chrome.notifications.onClicked.addListener(async (id) => {
+  if (id !== PAUSED_NOTIFICATION_ID || pausedTabId === null) return;
+  const tab = await chrome.tabs.get(pausedTabId).catch(() => null);
+  if (!tab) return;
+  await chrome.windows.update(tab.windowId, { focused: true }).catch(() => {});
+  await chrome.tabs.update(tab.id, { active: true }).catch(() => {});
+});
 
 async function captureScreenshot(tabs, tabId, prefix) {
   // Hide rectangle before capturing
@@ -307,6 +387,7 @@ async function captureScreenshot(tabs, tabId, prefix) {
     await sleep(100); // small buffer for DOM update
   }
 
+  await waitUntilCapturable(tabId);
   let dataUrl = await chrome.tabs.captureVisibleTab(tabs[0].windowId, {format: 'png'});
 
   // Show rectangle again
@@ -362,12 +443,16 @@ async function captureScrollStrip(tabs, tabId, prefix) {
     let target = 0;
     let writtenPx = 0; // strip rows saved so far; strip row 0 = scroll position 0
     for (let i = 0; i < MAX_STRIP_TILES && state.isPlaying; i++) {
-      const { actual, maxScroll } = await chrome.tabs.sendMessage(tabId, { command: 'scrollStripTo', y: target });
-      if (i > 0) {
-        // Fixed headers/footers/floating buttons would otherwise repeat on every step
-        await chrome.tabs.sendMessage(tabId, { command: 'suppressStickyElements', enable: true }).catch(() => {});
-      }
-      await sleep(SCROLL_SETTLE_DELAY);
+      let actual, maxScroll;
+      do {
+        // Redone after a pause, in case the page was scrolled meanwhile
+        ({ actual, maxScroll } = await chrome.tabs.sendMessage(tabId, { command: 'scrollStripTo', y: target }));
+        if (i > 0) {
+          // Fixed headers/footers/floating buttons would otherwise repeat on every step
+          await chrome.tabs.sendMessage(tabId, { command: 'suppressStickyElements', enable: true }).catch(() => {});
+        }
+        await sleep(SCROLL_SETTLE_DELAY);
+      } while (await waitUntilCapturable(tabId));
 
       const bitmap = await dataUrlToBitmap(await captureTab(windowId));
       // devicePixelRatio is exact (includes page zoom); innerWidth is rounded
@@ -500,6 +585,7 @@ async function captureZoom(tabs, tabId, prefix) {
       await sleep(100);
     }
 
+    await waitUntilCapturable(tabId);
     const metrics = await chrome.debugger.sendCommand(target, 'Page.getLayoutMetrics');
     const vv = metrics.cssVisualViewport;
     // Screenshot clips are measured in zoomed px (CSS px x browser zoom), and

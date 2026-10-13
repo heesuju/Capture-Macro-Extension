@@ -367,8 +367,8 @@ document.addEventListener('DOMContentLoaded', () => {
       btnPlay.disabled = false;
 
     } else if (state.isPlaying) {
-      statusDisplay.textContent = t('statusPlaying');
-      statusDisplay.className = 'status playing';
+      statusDisplay.textContent = t(state.isPaused ? 'statusPaused' : 'statusPlaying');
+      statusDisplay.className = state.isPaused ? 'status paused' : 'status playing';
       statusDisplay.classList.remove('hidden');
       btnRecord.disabled = true;
       btnPlay.innerHTML = `<svg class="btn-icon" width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="1"/></svg> <span class="btn-play-text">${t('stopBtn')}</span>`;

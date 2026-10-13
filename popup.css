@@ -177,6 +177,12 @@ body {
   color: var(--success-color);
 }
 
+.status.paused {
+  background: rgba(255, 109, 0, 0.15);
+  color: #ff6d00;
+  animation: pulse 1.5s infinite;
+}
+
 /* ── Forms ───────────────────────────────────────────── */
 .input-group {
   display: flex;
