@@ -11,7 +11,6 @@ function t(key) {
 document.addEventListener('DOMContentLoaded', () => {
   const btnRecord   = document.getElementById('btnRecord');
   const btnPlay     = document.getElementById('btnPlay');
-  const btnSetArea  = document.getElementById('btnSetArea');
   const areaBtns    = document.querySelectorAll('#areaRatioGroup .area-btn');
   const statusDisplay = document.getElementById('status');
   const actionCount = document.getElementById('actionCount');
@@ -19,7 +18,11 @@ document.addEventListener('DOMContentLoaded', () => {
   const prefixInput = document.getElementById('prefixInput');
   const captureFirstCheckbox = document.getElementById('captureFirstCheckbox');
   const createPdfCheckbox    = document.getElementById('createPdfCheckbox');
+  const skipDuplicatesCheckbox = document.getElementById('skipDuplicatesCheckbox');
+  const autoStopCheckbox     = document.getElementById('autoStopCheckbox');
+  const maxCapturesInput     = document.getElementById('maxCapturesInput');
   const captureModeGroup     = document.getElementById('captureModeGroup');
+  const modeStatus           = document.getElementById('modeStatus');
   const zoomMultiplierGroup  = document.getElementById('zoomMultiplierGroup');
   const btnSave     = document.getElementById('btnSave');
   const btnDelete   = document.getElementById('btnDelete');
@@ -47,7 +50,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // Set version from manifest
   if (appVersion) {
     const version = chrome.runtime.getManifest()?.version || '1.0.0';
-    appVersion.textContent = `CheeseIt v${version}`;
+    appVersion.textContent = `Cheezing v${version}`;
   }
 
   let currentState = {};
@@ -223,14 +226,15 @@ document.addEventListener('DOMContentLoaded', () => {
           if (response) updateUI(response);
         });
       } else {
-        btnSetArea.style.display = 'block';
-        btnSetArea.textContent = t('drawAreaBtn');
+        // Start drawing right away; close the popup so the page can be dragged on
+        const ratio = val === 'free' ? null : parseFloat(val);
+        chrome.runtime.sendMessage({ command: 'startSelectingArea', ratio }, () => window.close());
       }
     });
   });
 
   // ── Capture mode ──────────────────────────────────────
-  captureModeGroup.querySelectorAll('.segment-btn').forEach((btn) => {
+  captureModeGroup.querySelectorAll('.area-btn').forEach((btn) => {
     btn.addEventListener('click', () => {
       const mode = btn.dataset.mode;
       chrome.runtime.sendMessage({ command: 'updateCaptureMode', captureMode: mode }, (response) => {
@@ -245,15 +249,6 @@ document.addEventListener('DOMContentLoaded', () => {
       chrome.runtime.sendMessage({ command: 'updateZoomMultiplier', zoomMultiplier: multiplier }, (response) => {
         if (response) updateUI(response);
       });
-    });
-  });
-
-  btnSetArea.addEventListener('click', () => {
-    const activeBtn = document.querySelector('#areaRatioGroup .area-btn.active');
-    const ratioVal = activeBtn ? activeBtn.dataset.ratio : 'free';
-    const ratio = ratioVal === 'free' ? null : parseFloat(ratioVal);
-    chrome.runtime.sendMessage({ command: 'startSelectingArea', ratio }, (response) => {
-      if (response) updateUI(response);
     });
   });
 
@@ -287,12 +282,23 @@ document.addEventListener('DOMContentLoaded', () => {
     if (document.activeElement !== createPdfCheckbox) {
       createPdfCheckbox.checked = (state.createPdf !== false); // default true
     }
+    if (document.activeElement !== skipDuplicatesCheckbox) {
+      skipDuplicatesCheckbox.checked = state.skipDuplicates !== false;
+    }
+    if (document.activeElement !== autoStopCheckbox) {
+      autoStopCheckbox.checked = state.autoStopUnchanged !== false;
+    }
+    if (document.activeElement !== maxCapturesInput) {
+      maxCapturesInput.value = state.maxCaptures || 0;
+    }
 
     // Capture mode
     const captureMode = state.captureMode || 'single';
-    captureModeGroup.querySelectorAll('.segment-btn').forEach((btn) => {
+    captureModeGroup.querySelectorAll('.area-btn').forEach((btn) => {
       btn.classList.toggle('active', btn.dataset.mode === captureMode);
     });
+    const modeLabelKey = { single: 'modeSingle', scroll: 'modeScroll', zoom: 'modeZoom' }[captureMode];
+    modeStatus.textContent = t(modeLabelKey);
     zoomMultiplierGroup.style.display = captureMode === 'zoom' ? 'flex' : 'none';
 
     const zoomMultiplier = state.zoomMultiplier || 2;
@@ -334,14 +340,10 @@ document.addEventListener('DOMContentLoaded', () => {
     if (state.captureRect) {
       const activeRatio = state.captureRatio ? String(state.captureRatio) : 'free';
       setActiveAreaBtn(activeRatio);
-      areaStatus.textContent = `${t('customArea')} (${state.captureRect.width}×${state.captureRect.height})`;
-      btnSetArea.style.display = 'block';
-      btnSetArea.textContent = t('redrawAreaBtn');
+      areaStatus.textContent = `${Math.round(state.captureRect.width)}×${Math.round(state.captureRect.height)}`;
     } else {
       setActiveAreaBtn('full');
       areaStatus.textContent = t('fullPage');
-      btnSetArea.style.display = 'none';
-      btnSetArea.textContent = t('drawAreaBtn');
     }
 
     // Global state modes
@@ -351,7 +353,6 @@ document.addEventListener('DOMContentLoaded', () => {
       statusDisplay.classList.remove('hidden');
       btnRecord.disabled = true;
       btnPlay.disabled = true;
-      btnSetArea.disabled = true;
       areaBtns.forEach(b => b.disabled = true);
 
     } else if (state.isRecording) {
@@ -364,8 +365,13 @@ document.addEventListener('DOMContentLoaded', () => {
       btnPlay.disabled = false;
 
     } else if (state.isPlaying) {
-      statusDisplay.textContent = t('statusPlaying');
-      statusDisplay.className = 'status playing';
+      let statusText = t(state.isPaused ? 'statusPaused' : 'statusPlaying');
+      if (!state.isPaused) {
+        statusText += ' ' + t('countSaved').replace('{n}', state.runSaved || 0);
+        if (state.runSkipped > 0) statusText += ' · ' + t('countSkipped').replace('{n}', state.runSkipped);
+      }
+      statusDisplay.textContent = statusText;
+      statusDisplay.className = state.isPaused ? 'status paused' : 'status playing';
       statusDisplay.classList.remove('hidden');
       btnRecord.disabled = true;
       btnPlay.innerHTML = `<svg class="btn-icon" width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="1"/></svg> <span class="btn-play-text">${t('stopBtn')}</span>`;
@@ -379,7 +385,6 @@ document.addEventListener('DOMContentLoaded', () => {
       btnPlay.innerHTML = `<svg class="btn-icon" width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="8"/></svg> <span class="btn-play-text">${t('recordBtn')}</span>`;
       btnPlay.className = 'btn primary';
       btnPlay.disabled = false;
-      btnSetArea.disabled = false;
       areaBtns.forEach(b => b.disabled = false);
 
     } else {
@@ -389,7 +394,6 @@ document.addEventListener('DOMContentLoaded', () => {
       btnPlay.innerHTML = `<svg class="btn-icon" width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg> <span class="btn-play-text">${t('runBtn')}</span>`;
       btnPlay.className = 'btn success';
       btnPlay.disabled = false;
-      btnSetArea.disabled = false;
       areaBtns.forEach(b => b.disabled = false);
     }
   }
@@ -434,6 +438,20 @@ document.addEventListener('DOMContentLoaded', () => {
 
   captureFirstCheckbox.addEventListener('change', () => {
     chrome.runtime.sendMessage({ command: 'updateCaptureFirst', captureFirst: captureFirstCheckbox.checked });
+  });
+
+  skipDuplicatesCheckbox.addEventListener('change', () => {
+    chrome.runtime.sendMessage({ command: 'updateOption', key: 'skipDuplicates', value: skipDuplicatesCheckbox.checked });
+  });
+
+  autoStopCheckbox.addEventListener('change', () => {
+    chrome.runtime.sendMessage({ command: 'updateOption', key: 'autoStopUnchanged', value: autoStopCheckbox.checked });
+  });
+
+  maxCapturesInput.addEventListener('change', () => {
+    const value = Math.max(0, parseInt(maxCapturesInput.value, 10) || 0);
+    maxCapturesInput.value = value;
+    chrome.runtime.sendMessage({ command: 'updateOption', key: 'maxCaptures', value });
   });
 
   createPdfCheckbox.addEventListener('change', () => {

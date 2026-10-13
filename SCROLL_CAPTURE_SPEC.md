@@ -1,10 +1,10 @@
-# CheeseIt — Scroll Capture Feature Specification & Implementation Plan
+# Cheezing — Scroll Capture Feature Specification & Implementation Plan
 
 > **Implementation note:** shipped as a single `scroll` mode producing one continuous stitched strip (split into `_partN` files only past canvas limits). With a selected area over an inner scrollable panel, that panel is scrolled instead of the page. See `captureScrollStrip` in background.js.
 
 ## 1. Overview
 
-CheeseIt currently captures screenshots strictly from the visible viewport (`chrome.tabs.captureVisibleTab`) either once or after/before replaying macro events.
+Cheezing currently captures screenshots strictly from the visible viewport (`chrome.tabs.captureVisibleTab`) either once or after/before replaying macro events.
 
 This specification introduces a **Scroll Capture Engine** that systematically scrolls through a page (or a designated scrollable container) and captures the entire length without overlapping content. It operates both as an independent capture tool (when macros are disabled) and as a modular capture step within macro replay loops.
 

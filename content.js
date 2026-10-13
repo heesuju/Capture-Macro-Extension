@@ -4,14 +4,18 @@
 
   let isRecording = false;
   let captureRectDiv = null;
+  let rectRatio = null;      // locked width/height ratio of the area, or null for free
+  let rectLocked = false;    // set by the background while a macro plays back
 
   // Fetch initial state in case we were just injected
   chrome.runtime.sendMessage({ command: 'getState' }, (response) => {
     if (response) {
       isRecording = response.isRecording;
       if (isRecording) {
-        console.log('CheeseIt: Initialized in recording state');
+        console.log('Cheezing: Initialized in recording state');
       }
+      rectRatio = typeof response.captureRatio === 'number' ? response.captureRatio : null;
+      rectLocked = !!response.isPlaying;
       if (response.captureRect) {
         drawPersistentRect(response.captureRect);
       }
@@ -22,10 +26,15 @@
     if (message.command === 'setRecordingState') {
       isRecording = message.isRecording;
       if (isRecording) {
-        console.log('CheeseIt: Recording started');
+        console.log('Cheezing: Recording started');
       } else {
-        console.log('CheeseIt: Recording stopped');
+        console.log('Cheezing: Recording stopped');
       }
+      updateRectInteractivity();
+      sendResponse({ success: true });
+    } else if (message.command === 'setRectLocked') {
+      rectLocked = message.locked;
+      updateRectInteractivity();
       sendResponse({ success: true });
     } else if (message.command === 'startSelectingArea') {
       startSelection(message.ratio);
@@ -34,6 +43,7 @@
       if (captureRectDiv) {
         captureRectDiv.remove();
         captureRectDiv = null;
+        currentRect = null;
       }
       sendResponse({ success: true });
     } else if (message.command === 'hideRect') {
@@ -45,6 +55,15 @@
     } else if (message.command === 'suppressStickyElements') {
       suppressStickyElements(message.enable);
       sendResponse({ success: true });
+    } else if (message.command === 'getPageActivity') {
+      sendResponse(getPageActivity());
+    } else if (message.command === 'setLeaveGuard') {
+      if (message.enable) {
+        window.addEventListener('beforeunload', confirmLeave);
+      } else {
+        window.removeEventListener('beforeunload', confirmLeave);
+      }
+      sendResponse({ success: true });
     } else if (message.command === 'beginScrollStrip') {
       sendResponse(beginScrollStrip(message.rect));
     } else if (message.command === 'scrollStripTo') {
@@ -54,6 +73,41 @@
       sendResponse({ success: true });
     }
   });
+
+  // ── Page activity (for waiting until the page settles) ───────────────
+  // Started on first request; the page counts as just-changed at that point
+  // so it must then stay quiet for the full window.
+  let lastMutationAt = 0;
+  let mutationObserver = null;
+
+  function getPageActivity() {
+    if (!mutationObserver) {
+      lastMutationAt = Date.now();
+      mutationObserver = new MutationObserver(() => { lastMutationAt = Date.now(); });
+      mutationObserver.observe(document, { subtree: true, childList: true, attributes: true, characterData: true });
+    }
+    return {
+      msSinceMutation: Date.now() - lastMutationAt,
+      pendingImages: countPendingImagesInView(),
+      fontsLoading: document.fonts ? document.fonts.status === 'loading' : false
+    };
+  }
+
+  function countPendingImagesInView() {
+    let pending = 0;
+    for (const img of document.images) {
+      if (img.complete) continue;
+      const r = img.getBoundingClientRect();
+      if (r.bottom > 0 && r.right > 0 && r.top < window.innerHeight && r.left < window.innerWidth) pending++;
+    }
+    return pending;
+  }
+
+  // Shows Chrome's "Leave site?" dialog while a capture is in progress
+  function confirmLeave(e) {
+    e.preventDefault();
+    e.returnValue = '';
+  }
 
   // el -> original inline visibility. Kept as a map so repeated enable calls
   // (one per tile) add newly-appearing elements without recording our own
@@ -174,7 +228,7 @@
     return {
       region,
       innerWidth: window.innerWidth,
-      innerHeight: window.innerHeight,
+      devicePixelRatio: window.devicePixelRatio || 1,
       scroller: stripScroller ? 'element' : 'window'
     };
   }
@@ -240,24 +294,232 @@
   }, true);
 
 
+// ── Capture area box ──────────────────────────────────────────────────
+// The box itself ignores the mouse so the page under it stays usable; only
+// its border strips (drag to move) and handles (drag to resize) respond.
+// They are switched off while recording or playing back a macro, so macro
+// clicks always reach the page.
+const EDGE_GRAB = 8;        // px width of the draggable border strips
+const HANDLE_SIZE = 10;     // px
+const MIN_AREA_SIZE = 10;   // px, smallest width/height when resizing
+const HANDLES = {           // [moves left, top, right, bottom edge]
+  nw: [1, 1, 0, 0], n: [0, 1, 0, 0], ne: [0, 1, 1, 0], e: [0, 0, 1, 0],
+  se: [0, 0, 1, 1], s: [0, 0, 0, 1], sw: [1, 0, 0, 1], w: [1, 0, 0, 0]
+};
+let currentRect = null;
+let sizeTag = null;
+
 function drawPersistentRect(rect) {
-  if (!captureRectDiv) {
-    captureRectDiv = document.createElement('div');
-    captureRectDiv.style.position = 'fixed';
-    captureRectDiv.style.border = '2px dashed red';
-    captureRectDiv.style.backgroundColor = 'rgba(255, 0, 0, 0.1)';
-    captureRectDiv.style.pointerEvents = 'none';
-    captureRectDiv.style.zIndex = '9999999';
-    document.body.appendChild(captureRectDiv);
-  }
-  captureRectDiv.style.left = rect.x + 'px';
-  captureRectDiv.style.top = rect.y + 'px';
-  captureRectDiv.style.width = rect.width + 'px';
-  captureRectDiv.style.height = rect.height + 'px';
+  if (!captureRectDiv) buildRectBox();
+  currentRect = { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
+  layoutRectBox();
   captureRectDiv.style.display = 'block';
+  updateRectInteractivity();
 }
 
+function buildRectBox() {
+  captureRectDiv = document.createElement('div');
+  Object.assign(captureRectDiv.style, {
+    position: 'fixed',
+    border: '2px dashed red',
+    backgroundColor: 'rgba(255, 0, 0, 0.1)',
+    pointerEvents: 'none',
+    zIndex: '9999999',
+    boxSizing: 'border-box'
+  });
+
+  // Border strips: drag to move
+  for (const side of ['top', 'right', 'bottom', 'left']) {
+    const strip = document.createElement('div');
+    strip.dataset.cheezingGrip = 'move';
+    const horizontal = side === 'top' || side === 'bottom';
+    Object.assign(strip.style, {
+      position: 'absolute',
+      cursor: 'move',
+      [side]: `-${EDGE_GRAB / 2}px`,
+      [horizontal ? 'left' : 'top']: '0',
+      [horizontal ? 'width' : 'height']: '100%',
+      [horizontal ? 'height' : 'width']: `${EDGE_GRAB}px`
+    });
+    strip.addEventListener('mousedown', (e) => startRectDrag(e, 'move'));
+    captureRectDiv.appendChild(strip);
+  }
+
+  // Handles: drag to resize
+  for (const name of Object.keys(HANDLES)) {
+    const handle = document.createElement('div');
+    handle.dataset.cheezingGrip = name;
+    const [l, t, r, b] = HANDLES[name];
+    Object.assign(handle.style, {
+      position: 'absolute',
+      width: `${HANDLE_SIZE}px`,
+      height: `${HANDLE_SIZE}px`,
+      background: '#fff',
+      border: '2px solid red',
+      boxSizing: 'border-box',
+      cursor: `${name}-resize`,
+      left: l ? `-${HANDLE_SIZE / 2}px` : r ? `calc(100% - ${HANDLE_SIZE / 2}px)` : `calc(50% - ${HANDLE_SIZE / 2}px)`,
+      top: t ? `-${HANDLE_SIZE / 2}px` : b ? `calc(100% - ${HANDLE_SIZE / 2}px)` : `calc(50% - ${HANDLE_SIZE / 2}px)`
+    });
+    handle.addEventListener('mousedown', (e) => startRectDrag(e, name));
+    captureRectDiv.appendChild(handle);
+  }
+
+  // Close button above the top-right corner: clears the area
+  const closeBtn = document.createElement('div');
+  closeBtn.dataset.cheezingGrip = 'close';
+  closeBtn.textContent = '×';
+  chrome.storage.local.get('settings', ({ settings }) => {
+    closeBtn.title = settings && settings.language === 'ko' ? '영역 지우기' : 'Clear area';
+  });
+  Object.assign(closeBtn.style, {
+    position: 'absolute',
+    right: '-2px',
+    bottom: '100%',
+    marginBottom: '6px',
+    width: '18px',
+    height: '18px',
+    borderRadius: '50%',
+    background: 'red',
+    color: '#fff',
+    font: '700 14px/18px sans-serif',
+    textAlign: 'center',
+    cursor: 'pointer',
+    userSelect: 'none'
+  });
+  closeBtn.addEventListener('mousedown', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+  });
+  closeBtn.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    chrome.runtime.sendMessage({ command: 'clearArea' });
+  });
+  captureRectDiv.appendChild(closeBtn);
+
+  // Size readout shown while dragging
+  sizeTag = document.createElement('div');
+  Object.assign(sizeTag.style, {
+    position: 'absolute',
+    left: '0',
+    bottom: '100%',
+    marginBottom: '6px',
+    padding: '2px 6px',
+    background: 'red',
+    color: '#fff',
+    font: '600 11px/1.4 sans-serif',
+    borderRadius: '3px',
+    whiteSpace: 'nowrap',
+    display: 'none'
+  });
+  captureRectDiv.appendChild(sizeTag);
+
+  document.body.appendChild(captureRectDiv);
+}
+
+function layoutRectBox() {
+  const r = currentRect;
+  Object.assign(captureRectDiv.style, {
+    left: r.x + 'px',
+    top: r.y + 'px',
+    width: r.width + 'px',
+    height: r.height + 'px'
+  });
+  sizeTag.textContent = `${Math.round(r.width)}×${Math.round(r.height)}`;
+}
+
+function updateRectInteractivity() {
+  if (!captureRectDiv) return;
+  const editable = !isRecording && !rectLocked;
+  for (const grip of captureRectDiv.querySelectorAll('[data-cheezing-grip]')) {
+    const name = grip.dataset.cheezingGrip;
+    // With a locked ratio only the corners resize (they keep the ratio)
+    const sideHandle = name.length === 1;
+    const visible = editable && !(sideHandle && rectRatio);
+    grip.style.pointerEvents = visible ? 'auto' : 'none';
+    if (name !== 'move') grip.style.display = visible ? 'block' : 'none';
+  }
+}
+
+function startRectDrag(e, grip) {
+  if (e.button !== 0) return;
+  e.preventDefault();
+  e.stopPropagation();
+  const start = { ...currentRect };
+  const startX = e.clientX;
+  const startY = e.clientY;
+  const doc = document.documentElement;
+  const maxW = doc.clientWidth;
+  const maxH = doc.clientHeight;
+  sizeTag.style.display = 'block';
+
+  const onMove = (ev) => {
+    const dx = ev.clientX - startX;
+    const dy = ev.clientY - startY;
+    if (grip === 'move') {
+      currentRect.x = clamp(start.x + dx, 0, maxW - start.width);
+      currentRect.y = clamp(start.y + dy, 0, maxH - start.height);
+    } else {
+      currentRect = resizeRect(start, HANDLES[grip], dx, dy, maxW, maxH);
+    }
+    layoutRectBox();
+  };
+
+  const onUp = () => {
+    document.removeEventListener('mousemove', onMove, true);
+    document.removeEventListener('mouseup', onUp, true);
+    sizeTag.style.display = 'none';
+    chrome.runtime.sendMessage({
+      command: 'areaUpdated',
+      rect: { ...currentRect, devicePixelRatio: window.devicePixelRatio || 1 }
+    });
+  };
+
+  document.addEventListener('mousemove', onMove, true);
+  document.addEventListener('mouseup', onUp, true);
+}
+
+function resizeRect(start, [l, t, r, b], dx, dy, maxW, maxH) {
+  let left = start.x;
+  let top = start.y;
+  let right = start.x + start.width;
+  let bottom = start.y + start.height;
+  if (l) left = clamp(left + dx, 0, right - MIN_AREA_SIZE);
+  if (r) right = clamp(right + dx, left + MIN_AREA_SIZE, maxW);
+  if (t) top = clamp(top + dy, 0, bottom - MIN_AREA_SIZE);
+  if (b) bottom = clamp(bottom + dy, top + MIN_AREA_SIZE, maxH);
+
+  if (rectRatio) {
+    // Corner drag with a locked ratio: follow whichever direction moved more,
+    // anchored at the opposite corner, then shrink to fit the screen.
+    let w = right - left;
+    let h = bottom - top;
+    if (w / start.width >= h / start.height) h = w / rectRatio; else w = h * rectRatio;
+    const anchorX = l ? start.x + start.width : start.x;
+    const anchorY = t ? start.y + start.height : start.y;
+    const roomW = l ? anchorX : maxW - anchorX;
+    const roomH = t ? anchorY : maxH - anchorY;
+    const fit = Math.min(1, roomW / w, roomH / h);
+    w *= fit;
+    h *= fit;
+    left = l ? anchorX - w : anchorX;
+    top = t ? anchorY - h : anchorY;
+    right = left + w;
+    bottom = top + h;
+  }
+  return { x: left, y: top, width: right - left, height: bottom - top };
+}
+
+function clamp(v, min, max) {
+  return Math.min(Math.max(v, min), max);
+}
+
+const MIN_SELECTION_SIZE = 5; // px; smaller drags count as a click, i.e. cancel
+
 function startSelection(ratio) {
+  // Hide the current area while drawing, so its grips can't catch the drag
+  if (captureRectDiv) captureRectDiv.style.display = 'none';
   const overlay = document.createElement('div');
   overlay.style.position = 'fixed';
   overlay.style.top = '0';
@@ -313,6 +575,29 @@ function startSelection(ratio) {
     selection.style.height = height + 'px';
   };
 
+  // Removes the overlay and all of its listeners
+  const finish = () => {
+    overlay.remove();
+    overlay.removeEventListener('mousedown', onMouseDown);
+    overlay.removeEventListener('mousemove', onMouseMove);
+    overlay.removeEventListener('mouseup', onMouseUp);
+    document.removeEventListener('keydown', onKeyDown, true);
+  };
+
+  // Esc (or a click without dragging) cancels and keeps the previous area
+  const cancel = () => {
+    finish();
+    if (captureRectDiv && currentRect) captureRectDiv.style.display = 'block';
+    chrome.runtime.sendMessage({ command: 'areaSelectionCancelled' });
+  };
+
+  const onKeyDown = (e) => {
+    if (e.key !== 'Escape') return;
+    e.preventDefault();
+    e.stopPropagation();
+    cancel();
+  };
+
   const onMouseUp = (e) => {
     if (!isDragging) return;
     isDragging = false;
@@ -333,11 +618,13 @@ function startSelection(ratio) {
     
     const x = currentX < startX ? startX - width : startX;
     const y = currentY < startY ? startY - height : startY;
-    
-    overlay.remove();
-    overlay.removeEventListener('mousedown', onMouseDown);
-    overlay.removeEventListener('mousemove', onMouseMove);
-    overlay.removeEventListener('mouseup', onMouseUp);
+
+    if (width < MIN_SELECTION_SIZE || height < MIN_SELECTION_SIZE) {
+      cancel();
+      return;
+    }
+    finish();
+    rectRatio = ratio || null;
 
     const rect = { 
       x, 
@@ -359,6 +646,7 @@ function startSelection(ratio) {
   overlay.addEventListener('mousedown', onMouseDown);
   overlay.addEventListener('mousemove', onMouseMove);
   overlay.addEventListener('mouseup', onMouseUp);
+  document.addEventListener('keydown', onKeyDown, true);
 }
 })();
 

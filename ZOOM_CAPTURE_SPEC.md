@@ -1,4 +1,4 @@
-# CheeseIt — Zoom Grid Capture Feature Specification & Implementation Plan
+# Cheezing — Zoom Grid Capture Feature Specification & Implementation Plan
 
 > **Implementation note:** the shipped `zoom` mode does not use `chrome.tabs.setZoom` + window resizing (that silently fell back to 1x on maximized windows). It captures the same visible area as Standard (viewport or selection) via the DevTools protocol: `Page.captureScreenshot` with `clip.scale` re-renders the region at 2x/3x/4x without touching the layout, rendered in ≤4096px tiles and stitched. See `captureZoom` in background.js.
 

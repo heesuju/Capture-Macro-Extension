@@ -1,14 +1,15 @@
 {
   "manifest_version": 3,
-  "name": "CheeseIt",
+  "name": "__MSG_appName__",
   "version": "1.0.0",
-  "description": "Records clicks and keystrokes and replays them, capturing screenshots.",
+  "default_locale": "en",
+  "description": "__MSG_appDesc__",
   "permissions": [
-    "activeTab",
     "scripting",
     "debugger",
     "downloads",
-    "storage"
+    "storage",
+    "notifications"
   ],
   "host_permissions": [
     "<all_urls>"
