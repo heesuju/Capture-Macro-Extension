@@ -340,7 +340,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (state.captureRect) {
       const activeRatio = state.captureRatio ? String(state.captureRatio) : 'free';
       setActiveAreaBtn(activeRatio);
-      areaStatus.textContent = `${t('customArea')} (${state.captureRect.width}×${state.captureRect.height})`;
+      areaStatus.textContent = `${Math.round(state.captureRect.width)}×${Math.round(state.captureRect.height)}`;
     } else {
       setActiveAreaBtn('full');
       areaStatus.textContent = t('fullPage');
