@@ -1,7 +1,7 @@
-// Localization dictionaries for CheeseIt
+// Localization dictionaries for Cheezing
 const I18N = {
   en: {
-    appTitle: 'CheeseIt',
+    appTitle: 'Cheezing',
     settingsTitle: 'Settings',
     backBtn: 'Back',
     languageLabel: 'Language',
@@ -46,7 +46,7 @@ const I18N = {
     zoomMultiplierTip: 'Resolution multiplier'
   },
   ko: {
-    appTitle: 'CheeseIt',
+    appTitle: 'Cheezing',
     settingsTitle: '설정',
     backBtn: '뒤로가기',
     languageLabel: '언어 (Language)',

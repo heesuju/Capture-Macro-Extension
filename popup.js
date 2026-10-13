@@ -48,7 +48,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // Set version from manifest
   if (appVersion) {
     const version = chrome.runtime.getManifest()?.version || '1.0.0';
-    appVersion.textContent = `CheeseIt v${version}`;
+    appVersion.textContent = `Cheezing v${version}`;
   }
 
   let currentState = {};

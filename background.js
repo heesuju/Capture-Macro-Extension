@@ -614,7 +614,7 @@ async function captureZoom(tabs, tabId, prefix) {
       Math.sqrt(MAX_ZOOM_AREA / (region.width * region.height))
     ) / deviceScale;
     if (multiplier > maxScale) {
-      console.warn(`CheeseIt: zoom ${multiplier}x exceeds canvas limits for this area, using ${maxScale.toFixed(2)}x`);
+      console.warn(`Cheezing: zoom ${multiplier}x exceeds canvas limits for this area, using ${maxScale.toFixed(2)}x`);
       multiplier = Math.max(1, maxScale);
     }
     const scale = multiplier * deviceScale;
@@ -741,7 +741,7 @@ async function takeSingleCapture(prefix) {
     try {
       await performCapture(tabs, tabs[0].id, sessionPrefix);
     } catch (err) {
-      console.error('CheeseIt: capture failed:', err);
+      console.error('Cheezing: capture failed:', err);
     }
   }
 
@@ -787,7 +787,7 @@ async function startPlayback(prefix) {
       try {
         await performCapture(tabs, tabId, sessionPrefix);
       } catch (err) {
-        console.error('CheeseIt: capture failed:', err);
+        console.error('Cheezing: capture failed:', err);
       }
     }
 
@@ -828,7 +828,7 @@ async function startPlayback(prefix) {
       try {
         await performCapture(tabs, tabId, sessionPrefix);
       } catch (err) {
-        console.error('CheeseIt: capture failed:', err);
+        console.error('Cheezing: capture failed:', err);
       }
     }
 
