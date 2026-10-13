@@ -665,6 +665,9 @@ async function startPlayback(prefix) {
 
   try {
     await chrome.debugger.attach(target, '1.3');
+    // Let the "is debugging this browser" bar finish resizing the page so the
+    // first capture matches the size of the ones that follow
+    await sleep(ZOOM_ATTACH_SETTLE_DELAY);
   } catch (err) {
     console.log('Debugger attach skipped/failed (likely already attached):', err);
   }
