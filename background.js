@@ -556,7 +556,8 @@ function intersectRect(a, b) {
 
 async function saveCapture(dataUrl, prefix, { number, suffix = '' } = {}) {
   if (number === undefined) number = ++captureCount;
-  const filename = `${prefix}_${number.toString().padStart(3, '0')}${suffix}.png`;
+  const numbered = number.toString().padStart(3, '0');
+  const filename = `${prefix ? `${prefix}_` : ''}${numbered}${suffix}.png`;
   const filePath = currentSubfolder ? `${currentSubfolder}/${filename}` : filename;
 
   await chrome.downloads.download({
@@ -617,17 +618,9 @@ async function takeSingleCapture(prefix) {
   currentSubfolder = await getNextRunSubfolder();
   sessionCaptures = [];
 
-  if (prefix && prefix.length > 0) {
-    sessionPrefix = prefix;
-    state.prefix = prefix;
-  } else {
-    const now = new Date();
-    const yy = String(now.getFullYear()).slice(-2);
-    const mm = String(now.getMonth() + 1).padStart(2, '0');
-    const dd = String(now.getDate()).padStart(2, '0');
-    sessionPrefix = `${yy}${mm}${dd}`;
-    state.prefix = '';
-  }
+  // No prefix: files are just numbered, the dated run subfolder already says when
+  sessionPrefix = prefix || '';
+  state.prefix = sessionPrefix;
 
   const tabs = await chrome.tabs.query({active: true, lastFocusedWindow: true});
   if (tabs.length > 0) {
@@ -649,18 +642,9 @@ async function startPlayback(prefix) {
   currentSubfolder = await getNextRunSubfolder();
   sessionCaptures = [];
 
-  if (prefix && prefix.length > 0) {
-    sessionPrefix = prefix;
-    state.prefix = prefix;
-  } else {
-    // Generate 6 char YYMMDD
-    const now = new Date();
-    const yy = String(now.getFullYear()).slice(-2);
-    const mm = String(now.getMonth() + 1).padStart(2, '0');
-    const dd = String(now.getDate()).padStart(2, '0');
-    sessionPrefix = `${yy}${mm}${dd}`;
-    state.prefix = '';
-  }
+  // No prefix: files are just numbered, the dated run subfolder already says when
+  sessionPrefix = prefix || '';
+  state.prefix = sessionPrefix;
   
   broadcastState();
 
@@ -875,7 +859,7 @@ async function generateAndDownloadPdf(captures, prefix, subfolder) {
       reader.readAsDataURL(pdfBlob);
     });
 
-    const filename = `${prefix || 'capture'}.pdf`;
+    const filename = `${prefix || subfolder || 'capture'}.pdf`;
     const filePath = subfolder ? `${subfolder}/${filename}` : filename;
 
     await chrome.downloads.download({
