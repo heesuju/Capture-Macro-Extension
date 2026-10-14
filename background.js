@@ -18,11 +18,13 @@ let state = {
   maxCaptures: 0,         // end a macro run after this many saved captures (0 = no limit)
   runSaved: 0,            // captures saved in the current run
   runSkipped: 0,          // duplicate captures skipped in the current run
-  captureMode: 'single', // 'single' | 'scroll' | 'zoom'
-  zoomMultiplier: 2       // 2 | 3 | 4 -- resolution multiplier for zoom mode
+  longCapture: false,     // Long: scroll and stitch the whole page into one strip
+  hiRes: false,           // Hi-Res: render at zoomMultiplier× (also applies to Long)
+  zoomMultiplier: 4       // 2 | 3 | 4 -- Hi-Res resolution multiplier (Settings)
 };
 
 const ZOOM_ATTACH_SETTLE_DELAY = 300; // ms for the page to repaint after the debugger bar appears
+const DEFAULT_ZOOM_MULTIPLIER = 4;
 const ZOOM_TILE_PX = 4096; // max output px per side of one zoom screenshot tile
 const MAX_ZOOM_DIM = 32000; // max zoom output px per side (canvas dimension limit is 32767)
 const MAX_ZOOM_AREA = 64000000; // max zoom output px, keeps canvas memory ~256MB
@@ -36,7 +38,7 @@ const PDF_MAX_PAGE_DIM = 14400; // PDF spec limit for a page side, in points
 // Settings that must survive Chrome shutting the service worker down when
 // idle (which resets everything in memory). Messages wait for this to load.
 const PERSISTED_KEYS = [
-  'captureMode', 'zoomMultiplier', 'createPdf', 'captureFirst', 'skipDuplicates',
+  'longCapture', 'hiRes', 'zoomMultiplier', 'createPdf', 'captureFirst', 'skipDuplicates',
   'autoStopUnchanged', 'maxCaptures', 'macroEnabled', 'prefix', 'activeRecordingName'
 ];
 
@@ -45,6 +47,12 @@ const stateReady = chrome.storage.local.get(['savedRecordings', 'options']).then
   if (options) {
     for (const key of PERSISTED_KEYS) {
       if (key in options) state[key] = options[key];
+    }
+    // Settings saved before Long/Hi-Res became independent toggles
+    if ('captureMode' in options && !('longCapture' in options)) {
+      state.longCapture = options.captureMode === 'scroll';
+      state.hiRes = options.captureMode === 'zoom';
+      state.zoomMultiplier = DEFAULT_ZOOM_MULTIPLIER; // moved to Settings with a new default
     }
   }
   // The selected recording's actions come from the saved recordings
@@ -316,17 +324,9 @@ function handleMessage(message, sender, sendResponse) {
     state.createPdf = message.createPdf;
     sendResponse(state);
   } else if (message.command === 'updateOption') {
-    if (['skipDuplicates', 'autoStopUnchanged', 'maxCaptures'].includes(message.key)) {
+    if (['skipDuplicates', 'autoStopUnchanged', 'maxCaptures', 'longCapture', 'hiRes', 'zoomMultiplier'].includes(message.key)) {
       state[message.key] = message.value;
     }
-    sendResponse(state);
-  } else if (message.command === 'updateCaptureMode') {
-    state.captureMode = message.captureMode;
-    broadcastState();
-    sendResponse(state);
-  } else if (message.command === 'updateZoomMultiplier') {
-    state.zoomMultiplier = message.zoomMultiplier;
-    broadcastState();
     sendResponse(state);
   } else if (message.command === 'updateMacroEnabled') {
     state.macroEnabled = message.macroEnabled;
@@ -373,10 +373,10 @@ async function performCapture(tabs, tabId, prefix) {
   await chrome.tabs.sendMessage(tabId, { command: 'setLeaveGuard', enable: true }).catch(() => {});
   let images;
   try {
-    if (state.captureMode === 'zoom') {
-      images = await captureZoom(tabs, tabId);
-    } else if (state.captureMode === 'scroll') {
-      images = await captureScrollStrip(tabs, tabId);
+    if (state.longCapture) {
+      images = await captureScrollStrip(tabs, tabId, state.hiRes);
+    } else if (state.hiRes) {
+      images = await captureHiRes(tabs, tabId);
     } else {
       images = await captureScreenshot(tabs, tabId);
     }
@@ -678,11 +678,16 @@ async function captureTab(windowId) {
 // region-height at a time and stitches every step into one continuous image.
 // Each step crops from the position the scroller actually reached, so the
 // last step (which can't scroll a full height) contributes only new rows.
-async function captureScrollStrip(tabs, tabId) {
+async function captureScrollStrip(tabs, tabId, hiRes) {
   const windowId = tabs[0].windowId;
 
   await chrome.scripting.executeScript({ target: { tabId }, files: ['content.js'] }).catch(() => {});
   await chrome.tabs.sendMessage(tabId, { command: 'hideRect' }).catch(() => {});
+
+  // With Hi-Res, each step is re-rendered at N× instead of screenshotted.
+  // Started before measuring, since attaching can resize the page.
+  const hiResSession = hiRes ? await beginHiRes(tabId) : null;
+  const multiplier = state.zoomMultiplier || DEFAULT_ZOOM_MULTIPLIER;
 
   const plan = await chrome.tabs.sendMessage(tabId, { command: 'beginScrollStrip', rect: state.captureRect });
   const region = plan.region;
@@ -691,6 +696,7 @@ async function captureScrollStrip(tabs, tabId) {
   // overlap guarantees no gap. Duplicate rows are cropped below.
   const step = Math.floor(region.height) - 1;
   if (step < 1 || region.width < 1) {
+    if (hiResSession) await endHiRes(hiResSession);
     throw new Error('Scroll capture aborted: the capture area is empty.');
   }
 
@@ -711,29 +717,45 @@ async function captureScrollStrip(tabs, tabId) {
         await sleep(SCROLL_SETTLE_DELAY);
       } while (await waitUntilCapturable(tabId));
 
-      const bitmap = await dataUrlToBitmap(await captureTab(windowId));
-      // devicePixelRatio is exact (includes page zoom); innerWidth is rounded
-      // to whole CSS px, so only fall back to the measured ratio if the
-      // capture doesn't match the reported DPR.
-      const measured = bitmap.width / plan.innerWidth;
-      const scale = Math.abs(measured - plan.devicePixelRatio) * plan.innerWidth <= 2
-        ? plan.devicePixelRatio
-        : measured;
+      // `source` holds the step's pixels; `origin*` is where the region starts
+      // in it and `scale` its output px per CSS px.
+      let source, scale, originX, originY, regionW, regionH;
+      if (hiResSession) {
+        const rendered = await renderHiRes(hiResSession, region, multiplier);
+        source = rendered.canvas;
+        scale = rendered.pxPerCss;
+        originX = 0;
+        originY = 0;
+        regionW = source.width;
+        regionH = source.height;
+      } else {
+        source = await dataUrlToBitmap(await captureTab(windowId));
+        // devicePixelRatio is exact (includes page zoom); innerWidth is rounded
+        // to whole CSS px, so only fall back to the measured ratio if the
+        // capture doesn't match the reported DPR.
+        const measured = source.width / plan.innerWidth;
+        scale = Math.abs(measured - plan.devicePixelRatio) * plan.innerWidth <= 2
+          ? plan.devicePixelRatio
+          : measured;
+        originX = Math.round(region.x * scale);
+        originY = Math.round(region.y * scale);
+        regionW = Math.round(region.width * scale);
+        regionH = Math.floor(region.height * scale);
+      }
 
-      // Work in absolute device-pixel rows: this capture shows strip rows
+      // Work in absolute pixel rows: this step shows strip rows
       // [tileTop, tileTop + regionH). Keep only rows not yet written.
       const tileTop = Math.round(actual * scale);
-      const regionH = Math.floor(region.height * scale);
       const from = Math.max(writtenPx, tileTop);
-      const sx = Math.round(region.x * scale);
-      const sy = Math.round(region.y * scale) + (from - tileTop);
-      const sw = Math.round(region.width * scale);
-      const sh = Math.min(tileTop + regionH - from, bitmap.height - sy);
+      const sx = originX;
+      const sy = originY + (from - tileTop);
+      const sw = regionW;
+      const sh = Math.min(tileTop + regionH - from, source.height - sy);
       const isLast = actual >= maxScroll - 0.5;
       if (sh > 0) {
         if (!writer) writer = new StripWriter(sw);
         const remaining = Math.round(maxScroll * scale) + regionH - from;
-        await writer.add(bitmap, sx, sy, sh, remaining);
+        await writer.add(source, sx, sy, sh, remaining);
         writtenPx = from + sh;
       }
 
@@ -748,6 +770,7 @@ async function captureScrollStrip(tabs, tabId) {
     return [];
   } finally {
     await chrome.tabs.sendMessage(tabId, { command: 'endScrollStrip' }).catch(() => {});
+    if (hiResSession) await endHiRes(hiResSession);
     if (state.captureRect) {
       await chrome.tabs.sendMessage(tabId, { command: 'showRect' }).catch(() => {});
     }
@@ -805,117 +828,127 @@ class StripWriter {
   }
 }
 
-// ── Zoom Capture ───────────────────────────────────────────────────────
-// Re-renders the same visible area (viewport or selection) at N× resolution
-// through the DevTools protocol. Unlike page zoom this never changes the
-// layout, window size or what the user sees -- the renderer simply rasterizes
-// the clip at a higher scale. Large outputs are rendered tile by tile and
-// stitched, since the renderer has its own per-screenshot size limits.
-async function captureZoom(tabs, tabId) {
-  const target = { tabId };
+// ── Hi-Res rendering ───────────────────────────────────────────────────
+// Re-renders part of the visible page at N× resolution through the DevTools
+// protocol. Unlike page zoom this never changes the layout, window size or
+// what the user sees -- the renderer simply rasterizes the clip at a higher
+// scale. Large outputs are rendered tile by tile and stitched, since the
+// renderer has its own per-screenshot size limits. Used on its own (Hi-Res)
+// and for each step of a Long capture with Hi-Res on.
+
+// Attaches the debugger if needed. A fresh attach slides in Chrome's "is
+// debugging this browser" bar, which shrinks the page: the layout is pinned
+// to its pre-attach size so captures cover exactly what a normal capture
+// would (incl. fixed footers), then given time to repaint -- earlier
+// screenshots return stale tiles.
+async function beginHiRes(tabId) {
+  const session = { target: { tabId }, attachedHere: false, overridden: false };
   const tabBefore = await chrome.tabs.get(tabId);
-  let attachedHere = false;
-  let overridden = false;
   try {
-    await chrome.debugger.attach(target, '1.3');
-    attachedHere = true;
+    await chrome.debugger.attach(session.target, '1.3');
+    session.attachedHere = true;
   } catch (err) {
     // Already attached (macro playback / area selection) -- reuse that session
   }
+  if (session.attachedHere) {
+    // tab width/height are unzoomed px, which is what the override expects
+    await chrome.debugger.sendCommand(session.target, 'Emulation.setDeviceMetricsOverride', {
+      width: tabBefore.width,
+      height: tabBefore.height,
+      deviceScaleFactor: 0,
+      mobile: false
+    });
+    session.overridden = true;
+    await sleep(ZOOM_ATTACH_SETTLE_DELAY);
+  }
+  return session;
+}
 
-  try {
-    if (attachedHere) {
-      // A fresh attach slides in Chrome's "is debugging this browser" bar,
-      // which shrinks the page. Pin the layout to the pre-attach size so the
-      // zoomed image covers exactly what a Standard capture would (incl. fixed
-      // footers), then let it repaint -- earlier screenshots return stale tiles.
-      // tab width/height are unzoomed px, which is what the override expects
-      await chrome.debugger.sendCommand(target, 'Emulation.setDeviceMetricsOverride', {
-        width: tabBefore.width,
-        height: tabBefore.height,
-        deviceScaleFactor: 0,
-        mobile: false
+async function endHiRes(session) {
+  if (session.overridden) {
+    await chrome.debugger.sendCommand(session.target, 'Emulation.clearDeviceMetricsOverride').catch(() => {});
+  }
+  if (session.attachedHere) {
+    await chrome.debugger.detach(session.target).catch(() => {});
+  }
+}
+
+// Renders a viewport-relative CSS rect (null = whole viewport) at
+// `multiplier`× the normal capture resolution. Returns the canvas and its
+// output px per CSS px.
+async function renderHiRes(session, cssRect, multiplier) {
+  const metrics = await chrome.debugger.sendCommand(session.target, 'Page.getLayoutMetrics');
+  const vv = metrics.cssVisualViewport;
+  // Screenshot clips are measured in zoomed px (CSS px x browser zoom), and
+  // each clip unit becomes `deviceScale` output px at clip.scale = 1.
+  const zoom = vv.zoom || 1;
+  const deviceScale = (metrics.visualViewport && metrics.visualViewport.clientWidth / (vv.clientWidth * zoom)) || 1;
+
+  // clientWidth/Height exclude scrollbars
+  const viewportRegion = { x: 0, y: 0, width: vv.clientWidth, height: vv.clientHeight };
+  const cssRegion = cssRect ? intersectRect(viewportRegion, cssRect) : viewportRegion;
+  if (cssRegion.width < 1 || cssRegion.height < 1) {
+    throw new Error('Hi-Res capture aborted: the capture area is empty.');
+  }
+  const region = {
+    x: (vv.pageX + cssRegion.x) * zoom,
+    y: (vv.pageY + cssRegion.y) * zoom,
+    width: cssRegion.width * zoom,
+    height: cssRegion.height * zoom
+  };
+
+  // Capped so the stitched image stays within canvas limits
+  const maxScale = Math.min(
+    MAX_ZOOM_DIM / region.width,
+    MAX_ZOOM_DIM / region.height,
+    Math.sqrt(MAX_ZOOM_AREA / (region.width * region.height))
+  ) / deviceScale;
+  if (multiplier > maxScale) {
+    console.warn(`Cheezing: Hi-Res ${multiplier}x exceeds canvas limits for this area, using ${maxScale.toFixed(2)}x`);
+    multiplier = Math.max(1, maxScale);
+  }
+  const scale = multiplier * deviceScale; // output px per clip unit
+  const canvas = new OffscreenCanvas(Math.round(region.width * scale), Math.round(region.height * scale));
+  const ctx = canvas.getContext('2d');
+
+  // Tile in clip units, placed by rounding absolute positions so tiles meet exactly
+  const tileSize = Math.max(1, Math.floor(ZOOM_TILE_PX / scale));
+  for (let ty = 0; ty < region.height; ty += tileSize) {
+    const th = Math.min(tileSize, region.height - ty);
+    for (let tx = 0; tx < region.width; tx += tileSize) {
+      const tw = Math.min(tileSize, region.width - tx);
+      const shot = await chrome.debugger.sendCommand(session.target, 'Page.captureScreenshot', {
+        format: 'png',
+        // clip is in document coordinates (region already includes the scroll offset)
+        clip: { x: region.x + tx, y: region.y + ty, width: tw, height: th, scale: multiplier }
       });
-      overridden = true;
-      await sleep(ZOOM_ATTACH_SETTLE_DELAY);
+      const bitmap = await dataUrlToBitmap('data:image/png;base64,' + shot.data);
+      const dx = Math.round(tx * scale);
+      const dy = Math.round(ty * scale);
+      const dw = Math.round((tx + tw) * scale) - dx;
+      const dh = Math.round((ty + th) * scale) - dy;
+      ctx.drawImage(bitmap, 0, 0, bitmap.width, bitmap.height, dx, dy, dw, dh);
     }
+  }
+  return { canvas, pxPerCss: scale * zoom };
+}
 
+async function captureHiRes(tabs, tabId) {
+  const session = await beginHiRes(tabId);
+  try {
     if (state.captureRect) {
       await chrome.tabs.sendMessage(tabId, { command: 'hideRect' }).catch(() => {});
       await sleep(100);
     }
-
     await waitUntilCapturable(tabId);
-    const metrics = await chrome.debugger.sendCommand(target, 'Page.getLayoutMetrics');
-    const vv = metrics.cssVisualViewport;
-    // Screenshot clips are measured in zoomed px (CSS px x browser zoom), and
-    // each clip unit becomes `deviceScale` output px at clip.scale = 1.
-    const zoom = vv.zoom || 1;
-    const deviceScale = (metrics.visualViewport && metrics.visualViewport.clientWidth / (vv.clientWidth * zoom)) || 1;
-
-    // Viewport-relative CSS region; clientWidth/Height exclude scrollbars
-    const viewportRegion = { x: 0, y: 0, width: vv.clientWidth, height: vv.clientHeight };
-    const cssRegion = state.captureRect ? intersectRect(viewportRegion, state.captureRect) : viewportRegion;
-    if (cssRegion.width < 1 || cssRegion.height < 1) {
-      throw new Error('Zoom capture aborted: the capture area is empty.');
-    }
-    const region = {
-      x: (vv.pageX + cssRegion.x) * zoom,
-      y: (vv.pageY + cssRegion.y) * zoom,
-      width: cssRegion.width * zoom,
-      height: cssRegion.height * zoom
-    };
-
-    // Output px per clip unit. Capped so the stitched image stays within canvas limits.
-    let multiplier = state.zoomMultiplier || 2;
-    const maxScale = Math.min(
-      MAX_ZOOM_DIM / region.width,
-      MAX_ZOOM_DIM / region.height,
-      Math.sqrt(MAX_ZOOM_AREA / (region.width * region.height))
-    ) / deviceScale;
-    if (multiplier > maxScale) {
-      console.warn(`Cheezing: zoom ${multiplier}x exceeds canvas limits for this area, using ${maxScale.toFixed(2)}x`);
-      multiplier = Math.max(1, maxScale);
-    }
-    const scale = multiplier * deviceScale;
-    const outW = Math.round(region.width * scale);
-    const outH = Math.round(region.height * scale);
-
-    // Tile in clip units, placed by rounding absolute positions so tiles meet exactly
-    const tileSize = Math.max(1, Math.floor(ZOOM_TILE_PX / scale));
-    const canvas = new OffscreenCanvas(outW, outH);
-    const ctx = canvas.getContext('2d');
-
-    for (let ty = 0; ty < region.height; ty += tileSize) {
-      const th = Math.min(tileSize, region.height - ty);
-      for (let tx = 0; tx < region.width; tx += tileSize) {
-        const tw = Math.min(tileSize, region.width - tx);
-        const shot = await chrome.debugger.sendCommand(target, 'Page.captureScreenshot', {
-          format: 'png',
-          // clip is in document coordinates (region already includes the scroll offset)
-          clip: { x: region.x + tx, y: region.y + ty, width: tw, height: th, scale: multiplier }
-        });
-        const bitmap = await dataUrlToBitmap('data:image/png;base64,' + shot.data);
-        const dx = Math.round(tx * scale);
-        const dy = Math.round(ty * scale);
-        const dw = Math.round((tx + tw) * scale) - dx;
-        const dh = Math.round((ty + th) * scale) - dy;
-        ctx.drawImage(bitmap, 0, 0, bitmap.width, bitmap.height, dx, dy, dw, dh);
-      }
-    }
-
+    const { canvas } = await renderHiRes(session, state.captureRect, state.zoomMultiplier || DEFAULT_ZOOM_MULTIPLIER);
     const dataUrl = await blobToDataUrl(await canvas.convertToBlob({ type: 'image/png' }));
     return [{ dataUrl }];
   } finally {
     if (state.captureRect) {
       await chrome.tabs.sendMessage(tabId, { command: 'showRect' }).catch(() => {});
     }
-    if (overridden) {
-      await chrome.debugger.sendCommand(target, 'Emulation.clearDeviceMetricsOverride').catch(() => {});
-    }
-    if (attachedHere) {
-      await chrome.debugger.detach(target).catch(() => {});
-    }
+    await endHiRes(session);
   }
 }
 

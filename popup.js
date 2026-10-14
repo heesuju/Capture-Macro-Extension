@@ -233,20 +233,21 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   });
 
-  // ── Capture mode ──────────────────────────────────────
+  // ── Capture mode: Long and Hi-Res toggle independently ─
   captureModeGroup.querySelectorAll('.area-btn').forEach((btn) => {
     btn.addEventListener('click', () => {
-      const mode = btn.dataset.mode;
-      chrome.runtime.sendMessage({ command: 'updateCaptureMode', captureMode: mode }, (response) => {
+      const key = btn.dataset.toggle;
+      const value = !btn.classList.contains('active');
+      chrome.runtime.sendMessage({ command: 'updateOption', key, value }, (response) => {
         if (response) updateUI(response);
       });
     });
   });
 
-  zoomMultiplierGroup.querySelectorAll('.area-btn').forEach((btn) => {
+  zoomMultiplierGroup.querySelectorAll('.segment-btn').forEach((btn) => {
     btn.addEventListener('click', () => {
-      const multiplier = parseInt(btn.dataset.multiplier, 10);
-      chrome.runtime.sendMessage({ command: 'updateZoomMultiplier', zoomMultiplier: multiplier }, (response) => {
+      const value = parseInt(btn.dataset.multiplier, 10);
+      chrome.runtime.sendMessage({ command: 'updateOption', key: 'zoomMultiplier', value }, (response) => {
         if (response) updateUI(response);
       });
     });
@@ -292,17 +293,17 @@ document.addEventListener('DOMContentLoaded', () => {
       maxCapturesInput.value = state.maxCaptures || 0;
     }
 
-    // Capture mode
-    const captureMode = state.captureMode || 'single';
+    // Capture mode, e.g. "Screen", "Long", "Hi-Res 4x", "Long + Hi-Res 4x"
+    const zoomMultiplier = state.zoomMultiplier || 4;
     captureModeGroup.querySelectorAll('.area-btn').forEach((btn) => {
-      btn.classList.toggle('active', btn.dataset.mode === captureMode);
+      btn.classList.toggle('active', !!state[btn.dataset.toggle]);
     });
-    const modeLabelKey = { single: 'modeSingle', scroll: 'modeScroll', zoom: 'modeZoom' }[captureMode];
-    modeStatus.textContent = t(modeLabelKey);
-    zoomMultiplierGroup.style.display = captureMode === 'zoom' ? 'flex' : 'none';
+    const modeParts = [];
+    if (state.longCapture) modeParts.push(t('modeScroll'));
+    if (state.hiRes) modeParts.push(`${t('modeZoom')} ${zoomMultiplier}x`);
+    modeStatus.textContent = modeParts.length ? modeParts.join(' + ') : t('modeSingle');
 
-    const zoomMultiplier = state.zoomMultiplier || 2;
-    zoomMultiplierGroup.querySelectorAll('.area-btn').forEach((btn) => {
+    zoomMultiplierGroup.querySelectorAll('.segment-btn').forEach((btn) => {
       btn.classList.toggle('active', parseInt(btn.dataset.multiplier, 10) === zoomMultiplier);
     });
 
